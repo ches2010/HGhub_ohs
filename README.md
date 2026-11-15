@@ -7,10 +7,90 @@
 **第三方客户端 · Rust + Tauri 2**
 
 Windows / macOS / Linux / Android / iOS · iOS 圆角与玻璃材质 · 沉浸式竖屏播放
+**+ HarmonyOS（本分支移植，产出 HAP）**
 
 当前版本 **v2.0.0** · [Releases 下载与更新说明](https://github.com/ches2010/HGhub_ohs/releases)
 
 </div>
+
+## 鸿蒙（HarmonyOS）移植
+
+本仓库在 [zxsos/HGhubX](https://github.com/zxsos/HGhubX) 源码之上，加了 `harmony/` 子工程，把原来的
+Tauri 2 应用搬到鸿蒙，产出可安装的 HAP（Mate 80 / 鸿蒙 6、7 实测方向）。
+
+> 为什么不是"编一下就行"：Tauri 没有 HarmonyOS 手机端 target（上游只有面向鸿蒙 PC 的实验分支），
+> 现有 APK 在纯血鸿蒙上也装不上。所以这里换了宿主：**ArkWeb 跑原前端，ArkTS 顶替 Rust 层**。
+
+### 架构
+
+```
+HAP
+├── ArkWeb(Web 组件) ── http://127.0.0.1:17860/index.html   ← 原 HGhubX 前端（几乎不改）
+│      └── window.hghub  ◀── registerJavaScriptProxy
+└── ArkTS
+     ├── Bridge      http / setBase / background / netInfo / setBackEnabled …
+     └── LocalServer loopback HTTP（同源，规避 CORS 与自定义协议）
+          ├── /          静态前端（rawfile/www）
+          ├── /hls?u=    拉 m3u8 + 改写分片/key 地址
+          ├── /seg?u=    分片/key 透传（含 Range），内层 m3u8 继续改写
+          └── /img?u=    封面 AES-128-CBC 解密
+```
+
+Rust 侧的业务接口收敛成一个信封（`POST /api/edge/request`），所以 `patches/src/hg-bridge/` 里
+只要复刻信封 + 拼 path，不用重写几十个命令的业务逻辑；换来的是前端代码几乎零改动
+（只改平台识别与媒体基址）。
+
+> 不用 `onInterceptRequest` 做媒体代理：它是同步回调，拿不到异步网络结果，`/hls` `/seg` 会全部失败。
+> 这也是上游 Linux 桌面版起 loopback 代理的同一原因。
+
+### 快速开始
+
+```bash
+git clone https://github.com/ches2010/HGhub_ohs.git && cd HGhub_ohs
+
+# 1) 打补丁：注入 src/hg-bridge，改 src/api.ts 与 vite.config.ts
+node harmony/patches/apply-patch.mjs .
+
+# 2) 构建前端并同步进 App 资源
+pnpm install && pnpm build
+harmony/scripts/sync-web.sh
+
+# 3) DevEco Studio 打开 harmony/ → 选本机 SDK → 自动签名 → Build Hap(s)
+cd harmony
+./hvigorw --mode module -p module=entry@default -p product=default assembleHap
+hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
+```
+
+`harmony/build-profile.json5` 里的 `compatibleSdkVersion` 是占位值，要改成你本机装的 SDK。
+端口 17860 出现在三处（`Index.ets` 的 `PORT`、`apply-patch.mjs` 的 `LOCAL_ORIGIN`、打过补丁的
+`src/api.ts` 的 `LOCAL`），要改必须一起改。
+
+### 移植范围
+
+| 状态 | 内容 |
+|---|---|
+| ✅ 已移植 | 登录/注册/me、首页 feed、分类/标签/专题/榜单/搜索、吃瓜帖全套、详情、`api_play`（新旧接口回退）、评论与互动、用户页、**线路与镜像**（`publish.js` 解析 + 探测 + 自动选线）、**热搜榜**（SSR 解析）、**更新检查**、**返回键**（退到后台）、**网络诊断**（精简版）、媒体代理与封面解密 |
+| ⚠️ 简化 | `net_diag` 的 DNS/TCP 分段（报告里如实标 `tcp.skipped`） |
+| ❌ 未做 | `proxy_test`（鸿蒙无应用级代理配置，本来走系统代理/VPN）、`playback_log_*`（移动端关闭） |
+
+差异说明：Rust 版 token 按 origin 隔离，切线路不掉登录；鸿蒙版只存一份 token，**切线路会清会话**
+（宁可让用户重登，也不把 A 站 token 发给 B 站）。
+
+### 验证状态
+
+- 补丁层（`harmony/patches/src/hg-bridge/*.ts`）在基线 commit `bebfb7a` 上 `tsc --noEmit` **零错误**
+- 线路模块 25 项断言、更新检查 21 项断言、热搜解析 6 用例 + 7 个 href 边界、返回键链路、线路/诊断端到端
+  —— 均以 Node + 假上游跑过，用例取自上游 Rust 单测的原始样本
+- **ArkTS（`.ets`）尚未编译**：`TCPSocketServer`、`connection.getNetCapabilities`、
+  `moveAbilityToBackground` 这些 API 需在 DevEco 里按你的 SDK 版本过一遍
+
+细节见 [`harmony/docs/PORTING.md`](harmony/docs/PORTING.md)（真机自检顺序、已知风险都在里面）。
+
+### 源码基线
+
+上游 `zxsos/HGhubX` `main` @ `bebfb7a3385d8fde7918e6992692ec7b3b48489f`（v2.0.0）。
+补丁靠"原文锚点"定位，上游改版会让 `apply-patch.mjs` **报错停下**（不会静默改错位置）。
+
 
 > ⚠️ 免责声明：本项目仅供 **学习与技术交流**，不提供、不存储、不分发任何音视频内容，与任何内容提供方无关联。
 > 所有内容均来自第三方站点，版权归原作者与上游站点所有；使用者应自行遵守所在地法律法规，因使用产生的任何后果由使用者自行承担。

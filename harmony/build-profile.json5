@@ -1,0 +1,29 @@
+{
+  "app": {
+    // 签名：在 DevEco Studio → Project Structure → Signing Configs 里勾选
+    // 「Automatically generate signature」后，这里会自动写入 signingConfigs，
+    // 并把下面 products[0].signingConfig 指过去。不要手抄别人的证书。
+    "signingConfigs": [],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        // ⚠️ compatibleSdkVersion 必须选你本机 DevEco 实际安装的 SDK：
+        // 鸿蒙 6/7 设备请选对应 API 版本（如 "6.0.0(20)" / 更高），
+        // 写死成旧版本会被新系统拒绝安装或直接编译告警。
+        "compatibleSdkVersion": "5.0.0(12)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {}
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        { "name": "default", "applyToProducts": ["default"] }
+      ]
+    }
+  ]
+}

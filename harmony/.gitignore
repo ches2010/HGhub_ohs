@@ -1,0 +1,14 @@
+# DevEco / hvigor 产物
+build/
+.hvigor/
+oh_modules/
+entry/oh_modules/
+entry/build/
+entry/.preview/
+local.properties
+*.hap
+*.hsp
+*.har
+# 前端产物（由 scripts/sync-web.sh 生成）
+entry/src/main/resources/rawfile/www/*
+!entry/src/main/resources/rawfile/www/README.txt

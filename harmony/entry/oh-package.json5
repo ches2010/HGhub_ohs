@@ -1,0 +1,9 @@
+{
+  "name": "entry",
+  "version": "2.0.0",
+  "description": "HGhubX entry module",
+  "main": "",
+  "author": "",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "dependencies": {}
+}
