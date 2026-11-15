@@ -8,6 +8,8 @@
 
 Windows / macOS / Linux / Android / iOS · iOS 圆角与玻璃材质 · 沉浸式竖屏播放
 
+当前版本 **v2.0.0** · [Releases 下载与更新说明](https://github.com/ches2010/HGhub_ohs/releases)
+
 </div>
 
 > ⚠️ 免责声明：本项目仅供 **学习与技术交流**，不提供、不存储、不分发任何音视频内容，与任何内容提供方无关联。
