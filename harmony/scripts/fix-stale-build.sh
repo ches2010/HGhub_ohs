@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# 把鸿蒙移植的「编译修复版」5 个文件同步到已有的构建目录。
+# 把鸿蒙移植的最新源码同步到已有的构建目录（解压副本不会自动跟随仓库）。
 #
 #   ./fix-stale-build.sh /mnt/workspace/projects/_unzip/harmony
+#   REF=<commit> ./fix-stale-build.sh <dir>     # 需要钉住某个提交时
 #
-# 背景：如果构建目录是「解压副本」而不是 git clone，它不会跟着仓库更新，
-# DevEco 会一直拿旧文件编译，报错也就一直是同一批（clearCache / toArrayBuffer / getContext）。
+# 背景：DevEco 的构建目录常常是「解压副本」而不是 git clone，
+# 它会一直拿旧文件编译，报错也就一直是同一批（clearCache / toArrayBuffer / getContext / onConsole）。
 set -euo pipefail
 
 DIR="${1:-}"
@@ -14,8 +15,8 @@ if [ -z "$DIR" ] || [ ! -d "$DIR/entry/src/main/ets" ]; then
 fi
 
 REPO="ches2010/HGhub_ohs"
-# 钉住提交，避免拉到中间态：14d544b = 编译修复 + 文档
-REF="${REF:-14d544be0356395a066ea751a01309480d2e4a61}"
+# 默认跟 main（持续修 bug 时最省事）；要复现某个版本就传 REF=<sha>
+REF="${REF:-main}"
 BASE="https://raw.githubusercontent.com/${REPO}/${REF}"
 
 FILES=(
@@ -24,26 +25,35 @@ FILES=(
   "entry/src/main/ets/core/Http.ets"
   "entry/src/main/ets/core/LocalServer.ets"
   "entry/src/main/ets/pages/Index.ets"
+  "scripts/build-web.sh"
 )
 
 for rel in "${FILES[@]}"; do
   dst="${DIR}/${rel}"
+  mkdir -p "$(dirname "$dst")"
   echo "→ ${rel}"
   curl -fsSL -o "$dst" "${BASE}/harmony/${rel}"
+  case "$rel" in *.sh) chmod +x "$dst" ;; esac
 done
 
+E="${DIR}/entry/src/main/ets"
 echo
-echo "── 校验（必须全部为「OK」）──"
-grep -q 'toArrayBuffer' "${DIR}/entry/src/main/ets/core/Media.ets" \
-  && echo "✗ Media.ets 还是旧版本" || echo "OK  Media.ets 已用 Uint8Array（无 toArrayBuffer）"
-grep -q 'controller.clearCache()' "${DIR}/entry/src/main/ets/core/Bridge.ets" \
-  && echo "✗ Bridge.ets 还是旧版本" || echo "OK  Bridge.ets 已移除 clearCache()"
-grep -q 'getHostContext' "${DIR}/entry/src/main/ets/pages/Index.ets" \
-  && echo "OK  Index.ets 已用 getUIContext().getHostContext()" || echo "✗ Index.ets 还是旧版本"
-grep -q 'let resp: http.HttpResponse' "${DIR}/entry/src/main/ets/core/Http.ets" \
-  && echo "OK  Http.ets 已加 try/catch" || echo "✗ Http.ets 还是旧版本"
-grep -q '本地服务无法监听' "${DIR}/entry/src/main/ets/core/LocalServer.ets" \
-  && echo "OK  LocalServer.ets 已加 try/catch" || echo "✗ LocalServer.ets 还是旧版本"
+echo "── 源码校验（必须全部 OK）──"
+grep -q 'toArrayBuffer'            "$E/core/Media.ets"      && echo "✗ Media.ets 仍是旧版"      || echo "OK  Media.ets 用 Uint8Array"
+grep -q 'controller.clearCache()'  "$E/core/Bridge.ets"     && echo "✗ Bridge.ets 仍是旧版"     || echo "OK  Bridge.ets 已移除 clearCache()"
+grep -q 'let resp: http.HttpResponse' "$E/core/Http.ets"    && echo "OK  Http.ets 已加 try/catch" || echo "✗ Http.ets 仍是旧版"
+grep -q 'hasBundle'                "$E/core/LocalServer.ets" && echo "OK  LocalServer 有产物探测" || echo "✗ LocalServer.ets 仍是旧版"
+grep -q 'onConsole((event): boolean' "$E/pages/Index.ets"   && echo "OK  Index.ets onConsole 返回 boolean" || echo "✗ Index.ets 仍是旧版"
+grep -q 'diagnosePanel'            "$E/pages/Index.ets"     && echo "OK  Index.ets 有诊断面板"    || echo "✗ Index.ets 仍是旧版"
+
+WWW="${DIR}/entry/src/main/resources/rawfile/www"
+echo
+if [ -f "${WWW}/index.html" ]; then
+  echo "OK  rawfile/www 已有前端产物（$(find "$WWW" -type f | wc -l | tr -d ' ') 个文件）"
+else
+  echo "⚠ rawfile/www 里没有 index.html —— 这样装到手机上仍然白屏！"
+  echo "   在仓库根执行：harmony/scripts/build-web.sh"
+fi
 
 echo
-echo "5 个文件已更新。回 DevEco 直接重新 Build（hvigor 会自行重新编译改动过的文件，不用清缓存）。"
+echo "同步完成。回 DevEco 重新 Build（无需清缓存）。"

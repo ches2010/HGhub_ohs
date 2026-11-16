@@ -137,11 +137,14 @@ struct Index {
             bridge.setPageReady();
           }
         })
-        .onConsole((event) => {
-          // 前端的 console 直接进 hilog：白屏时第一时间能看到 JS 报错
+        .onConsole((event): boolean => {
+          // 前端的 console 直接进 hilog：白屏时第一时间就能看到 JS 报错。
+          // 注意：ArkWeb 的 onConsole 签名是 Callback<OnConsoleEvent, boolean>，
+          // 返回 true = 该条消息已由我们处理，不再交给系统默认打印。
           if (event !== undefined && event !== null) {
             hilog.info(0x0000, TAG, 'web console: %{public}s', event.message.getMessage());
           }
+          return true;
         })
         .onErrorReceive((event) => {
           if (event !== undefined && event !== null) {
