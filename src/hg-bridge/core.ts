@@ -121,6 +121,14 @@ const decoder = new TextDecoder("utf-8");
   }
 };
 
+/** 是否运行在鸿蒙宿主（ArkTS 已通过 registerJavaScriptProxy 注入 window.hghub）。
+ *  未注入时（CI 的 Playwright fixture、Tauri 桌面端）由 invoke() 回退到
+ *  Tauri 的 __TAURI_INTERNALS__.invoke 通道，保证测试与桌面端不被别名劫持卡死。 */
+function hasHarmonyBridge(): boolean {
+  return typeof window !== "undefined" &&
+    !!(window as unknown as { hghub?: unknown }).hghub;
+}
+
 function native(): Record<string, (...args: any[]) => void> {
   const bridge = (window as unknown as { hghub?: Record<string, (...args: any[]) => void> }).hghub;
   if (!bridge) {
@@ -547,6 +555,14 @@ function notPorted(cmd: string): never {
 
 export async function invoke<T = Json>(cmd: string, args: Record<string, Json> = {}): Promise<T> {
   const a = args ?? {};
+  if (!hasHarmonyBridge()) {
+    const tauri = (window as unknown as {
+      __TAURI_INTERNALS__?: { invoke: (c: string, a?: Record<string, Json>) => Promise<unknown> };
+    }).__TAURI_INTERNALS__;
+    if (tauri) {
+      return (await tauri.invoke(cmd, a)) as T;
+    }
+  }
   switch (cmd) {
     /* —— 启动 / 会话 —— */
     case "app_boot": {
