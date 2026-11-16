@@ -42,9 +42,9 @@ cd HGhubX && git checkout bebfb7a3385d8fde7918e6992692ec7b3b48489f
 
 ```bash
 git clone https://github.com/zxsos/HGhubX.git
-node harmony/patches/apply-patch.mjs .
+node HGhubHarmony/patches/apply-patch.mjs ./HGhubX
 cd HGhubX && pnpm install && pnpm build
-harmony/scripts/sync-web.sh
+../HGhubHarmony/scripts/sync-web.sh .
 ```
 
 补丁会做这些事（都有原文校验，上游改版会立刻报错而不是静默失败）：
@@ -58,7 +58,7 @@ harmony/scripts/sync-web.sh
 
 ### 2.2 DevEco Studio
 
-1. 打开 `harmony/` 目录（不是仓库根，是这个子工程）。
+1. 打开 `HGhubHarmony` 目录（不是仓库根，是这份骨架根目录）。
 2. 首次打开会提示同步 `ohpm`，允许它下载 `@ohos/hvigor-ohos-plugin` 等。
 3. **改 SDK 版本**：`build-profile.json5` 里 `compatibleSdkVersion` 我填的是 `"5.0.0(12)"` 占位，请改成你本机为鸿蒙 7 安装的 SDK（IDE 会提示可用项）。`module.json5` 里的 `deviceTypes` 已含 phone/tablet。
 4. 签名：Project Structure → Signing Configs → 勾 **Automatically generate signature**（需要登录已实名认证的华为账号）。它会生成调试证书 + profile，并把 Mate 80 的 UDID 注册进调试设备。
@@ -190,6 +190,25 @@ UIAbility.onBackPressed()                      // 同步，必须立刻返回 bo
 - ⚠️ **版本号要对齐两处**：`check_update` 比的是前端版本（vite 注入的 `package.json` version），
   而系统「应用信息」里显示的是 `AppScope/app.json5` 的 `versionName`。两者都保持 `2.0.0`，
   否则升级后会出现"检查更新一直说有新版"或"明明更新了还提示旧版"。
+
+## 5.6 DevEco 首次编译对齐记录（2026-11-16）
+
+Mate 80 上第一次 `assembleHap` 报了 7 个错误 + 12 个告警，已全部处理并提交：
+
+| 报错 | 原因 | 处理 |
+|---|---|---|
+| `Property 'clearCache' does not exist on type 'WebviewController'`（Bridge.ets） | 本 SDK 的 `WebviewController` 只有 `clearSslCache`，没有 `clearCache` | 不用 `WebStorage.deleteAllData()`（那会连 localStorage 里的登录态/线路选择/观看记录一起清掉），`cache_clear` 明确降级为「无可清理 + 记日志」——Rust 版清的是内存缓存，移植版媒体代理不做内容缓存 |
+| `Type 'ArrayBuffer' is missing ... from type 'Uint8Array'`（Media.ets ×2） | cryptoFramework 的 `DataBlob.data` 必须是 **Uint8Array** | 改为直接传 `Uint8Array`，删掉多余的 `toArrayBuffer` 转换 |
+| `No overload matches this call`（Media.ets ×2，`init` / `doFinal`） | 上面那条的连带错误（`convertKey` 返回值被推成 `void & Promise<SymKey>`） | 同上；`plain` 显式标注 `cryptoFramework.DataBlob` |
+| `Property 'data' does not exist on type 'void & Promise<DataBlob>'`（Media.ets） | 同上 | 同上 |
+
+告警（不阻塞编译，也一并处理了）：
+- `Http.ets` / `LocalServer.ets`：ArkTS 要求对可能抛异常的调用显式处理 → 分别给 `request.request()`、`TCPSocketServer` 构造与 `listen()` 加了 try/catch（错误信息里带上端口）。
+- `Index.ets`：`getContext` 已废弃 → 改用 `getUIContext().getHostContext()`，取不到再兜底旧写法。
+
+仍然会看到、且**不用管**的提示：
+- `cryptoFramework` 的 syscap 提示（`createSymKeyGenerator` / `init` / `doFinal` 等"并非所有设备具备"）——这是泛型提示，手机平板都有。
+- `build-profile.json5` 未显式声明 `targetSdkVersion` 的建议——DevEco 里选定 SDK 后会自己写，别手抄。
 
 ## 6. 合规
 
