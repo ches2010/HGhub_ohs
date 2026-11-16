@@ -45,6 +45,11 @@ Rust 侧的业务接口收敛成一个信封（`POST /api/edge/request`），所
 
 ### 快速开始
 
+> 不方便 clone 的话，仓库根的 `HGhub_ohs_harmony.zip` 就是同一份工程（含 `harmony/` 与根 README），下载解压即可。
+>
+> 如果 DevEco 每次报的都是同一批错误（`clearCache` / `toArrayBuffer` / `getContext`），说明构建目录还是旧的解压副本，
+> 跑 `harmony/scripts/fix-stale-build.sh <你的 harmony 目录>` 同步那 5 个文件就行。
+
 ```bash
 git clone https://github.com/ches2010/HGhub_ohs.git && cd HGhub_ohs
 
