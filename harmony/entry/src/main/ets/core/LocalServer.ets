@@ -114,6 +114,8 @@ export class LocalServer {
   private baseProvider: () => string;
   private server: socket.TCPSocketServer | null = null;
   private running: boolean = false;
+  /** rawfile/www 里是否存在前端产物（index.html）。缺了就只能白屏，必须让界面能说出来。 */
+  private bundleReady: boolean = false;
 
   constructor(mgr: resourceManager.ResourceManager, port: number, baseProvider: () => string) {
     this.mgr = mgr;
@@ -146,6 +148,12 @@ export class LocalServer {
     });
     this.server = server;
     this.running = true;
+    this.bundleReady = this.readRaw('www/index.html') !== null;
+  }
+
+  /** 前端产物是否已同步进 rawfile（构造并 start() 之后才有效） */
+  hasBundle(): boolean {
+    return this.bundleReady;
   }
 
   async stop(): Promise<void> {
@@ -349,6 +357,23 @@ export class LocalServer {
     }
   }
 
+  /** 前端产物缺失时的说明页：把「为什么白屏」和「怎么修」直接写在页面上 */
+  private missingBundleHtml(path: string): string {
+    return `<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">`
+      + `<style>body{background:#111;color:#eee;font:15px/1.7 -apple-system,sans-serif;padding:22px}`
+      + `code{background:#222;padding:2px 6px;border-radius:4px;word-break:break-all}`
+      + `h3{color:#ff8a80;margin:0 0 12px}li{margin:6px 0}</style></head><body>`
+      + `<h3>本地服务已启动，但 App 里没有前端页面</h3>`
+      + `<p><code>entry/src/main/resources/rawfile/www/</code> 是空的（只有 README.txt），`
+      + `所以 <code>${path}</code> 取不到内容 —— 这就是白屏的原因。</p>`
+      + `<p><b>修复（在仓库根执行）：</b></p>`
+      + `<ol><li><code>node harmony/patches/apply-patch.mjs .</code></li>`
+      + `<li><code>harmony/scripts/build-web.sh</code>（装依赖 + 构建 + 同步，一步到位）</li>`
+      + `<li>重新 Build HAP 并安装</li></ol>`
+      + `<p>它会把前端 dist 同步成 <code>rawfile/www/index.html</code> 与 <code>assets/</code>。</p>`
+      + `</body></html>`;
+  }
+
   private async serveStatic(
     client: socket.TCPSocketConnection,
     path: string,
@@ -370,6 +395,12 @@ export class LocalServer {
       }
     }
     if (bytes === null) {
+      if (!this.bundleReady) {
+        // 前端产物没同步进来：给一页能看懂的中文说明，而不是让用户对着白屏猜
+        await this.send(client, 200, 'OK', 'text/html; charset=utf-8',
+          encodeText(this.missingBundleHtml(clean)), []);
+        return;
+      }
       await this.send(client, 404, 'Not Found', 'text/plain', encodeText(`not found: ${clean}`), []);
       return;
     }

@@ -210,6 +210,38 @@ Mate 80 上第一次 `assembleHap` 报了 7 个错误 + 12 个告警，已全部
 - `cryptoFramework` 的 syscap 提示（`createSymKeyGenerator` / `init` / `doFinal` 等"并非所有设备具备"）——这是泛型提示，手机平板都有。
 - `build-profile.json5` 未显式声明 `targetSdkVersion` 的建议——DevEco 里选定 SDK 后会自己写，别手抄。
 
+## 5.7 真机白屏排查（第一次装机最可能踩的坑）
+
+**头号原因：`rawfile/www/` 是空的。** 该目录被 `.gitignore` 排除，从仓库/zip 拿到的工程里只有 `README.txt`，
+LocalServer 取不到 `index.html`，页面自然全白。排查顺序：
+
+```bash
+# ① 构建机上确认前端产物在不在（必须在，不能只有 README.txt）
+ls harmony/entry/src/main/resources/rawfile/www/
+# 缺的话一步补齐：
+harmony/scripts/build-web.sh      # = 打补丁 + pnpm install + pnpm build + 同步 dist
+# 然后重新 Build HAP
+
+# ② 看本地服务与页面加载（App 里已把关键信息打到 hilog）
+hdc shell hilog | grep HGhubX
+#   local server on http://127.0.0.1:17860, bundle=true     ← 服务起来了、产物也在
+#   page loaded: http://127.0.0.1:17860/index.html          ← 页面真的加载了
+#   http 404 url=.../index.html                             ← 产物缺失（回到 ①）
+#   load error: net::ERR_CONNECTION_REFUSED ...              ← 本地服务没起来（端口占用/权限）
+#   web console: ...                                        ← 前端 JS 的报错，原样可见
+
+# ③ 端口是否被占
+hdc shell netstat -an | grep 17860
+```
+
+界面上也已经加了自证手段，**不依赖 Web 能渲染**：
+- 产物缺失 → 由 ArkUI 直接盖一层红色标题的说明面板（含修复命令），不会再让你对着白屏猜；
+- 页面加载失败 / 收到 4xx-5xx → 面板显示最后一次的错误与 URL；
+- 本地服务启动失败 → 显示原因与端口号。
+
+另外这版给 `Web` 组件接上了 `onConsole` / `onErrorReceive` / `onHttpErrorReceive`，
+前端 console、资源加载错误、HTTP 错误码都会进 hilog（TAG = `HGhubX`），远程排查不用连调试器。
+
 ## 6. 合规
 
 HGhubX 是 PolyForm Noncommercial 1.0.0：个人学习、自用、非营利可以；禁止打包出售、接广告/会员/付费点播。

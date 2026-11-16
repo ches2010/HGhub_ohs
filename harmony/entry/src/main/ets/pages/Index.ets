@@ -11,6 +11,10 @@ const PORT: number = 17860;
 @Component
 struct Index {
   @State pageUrl: string = 'about:blank';
+  /** rawfile/www 里没有前端产物：用 ArkUI 直接盖一层说明，不依赖 Web 能渲染出来 */
+  @State bundleMissing: boolean = false;
+  @State bootError: string = '';
+  @State lastLoadError: string = '';
   private controller: webview.WebviewController = new webview.WebviewController();
   private server: LocalServer | null = null;
   private bridge: Bridge | null = null;
@@ -30,13 +34,16 @@ struct Index {
     });
     this.server = server;
     server.start().then(() => {
-      hilog.info(0x0000, TAG, 'local server on %{public}s', server.pageUrl());
+      hilog.info(0x0000, TAG, 'local server on %{public}s, bundle=%{public}s',
+        server.pageUrl(), String(server.hasBundle()));
+      this.bundleMissing = !server.hasBundle();
       this.pageUrl = server.pageUrl();
     }).catch((err: Error) => {
       hilog.error(0x0000, TAG, 'local server failed: %{public}s', err.message);
-      const html = `<html><body style="background:#111;color:#eee;font:16px sans-serif;padding:24px">
-        <h3>本地服务启动失败</h3><p>${err.message}</p>
-        <p>端口 ${PORT} 可能被占用，或缺少 ohos.permission.INTERNET。</p></body></html>`;
+      this.bootError = err.message;
+      const html = `<html><body style="background:#111;color:#eee;font:16px sans-serif;padding:24px">`
+        + `<h3>本地服务启动失败</h3><p>${err.message}</p>`
+        + `<p>端口 ${PORT} 可能被占用，或缺少 ohos.permission.INTERNET。</p></body></html>`;
       this.pageUrl = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
     });
   }
@@ -62,8 +69,43 @@ struct Index {
     }
   }
 
+  @Builder
+  diagnosePanel() {
+    Column({ space: 10 }) {
+      Text(this.bundleMissing ? 'App 里没有前端页面（这就是白屏原因）' : '加载失败')
+        .fontSize(18)
+        .fontColor('#ff8a80')
+        .fontWeight(FontWeight.Bold)
+      if (this.bundleMissing) {
+        Text('entry/src/main/resources/rawfile/www/ 是空的（只有 README.txt），LocalServer 取不到 index.html。')
+          .fontSize(13)
+          .fontColor('#cccccc')
+        Text('修复（在仓库根执行）：\n1) node harmony/patches/apply-patch.mjs .\n2) harmony/scripts/build-web.sh\n3) 重新 Build HAP')
+          .fontSize(13)
+          .fontColor('#eeeeee')
+      }
+      if (this.bootError.length > 0) {
+        Text(`本地服务启动失败：${this.bootError}`)
+          .fontSize(13)
+          .fontColor('#eeeeee')
+        Text(`端口 ${PORT} 可能被占用`).fontSize(12).fontColor('#999999')
+      }
+      if (this.lastLoadError.length > 0) {
+        Text(`最近一次加载错误：${this.lastLoadError}`)
+          .fontSize(12)
+          .fontColor('#aaaaaa')
+      }
+      Text('完整日志：hdc shell hilog | grep HGhubX')
+        .fontSize(12)
+        .fontColor('#888888')
+    }
+    .padding(20)
+    .width('100%')
+    .backgroundColor('#111111')
+  }
+
   build() {
-    Column() {
+    Stack() {
       Web({ src: this.pageUrl, controller: this.controller })
         .javaScriptAccess(true)
         .domStorageAccess(true)
@@ -89,12 +131,38 @@ struct Index {
           this.controller.refresh();
         })
         .onPageEnd(() => {
-          hilog.info(0x0000, TAG, 'page loaded');
+          hilog.info(0x0000, TAG, 'page loaded: %{public}s', this.pageUrl);
           const bridge = this.bridge;
           if (bridge !== null) {
             bridge.setPageReady();
           }
         })
+        .onConsole((event) => {
+          // 前端的 console 直接进 hilog：白屏时第一时间能看到 JS 报错
+          if (event !== undefined && event !== null) {
+            hilog.info(0x0000, TAG, 'web console: %{public}s', event.message.getMessage());
+          }
+        })
+        .onErrorReceive((event) => {
+          if (event !== undefined && event !== null) {
+            const info = event.error.getErrorInfo();
+            hilog.error(0x0000, TAG, 'load error: %{public}s url=%{public}s',
+              info, event.request.getRequestUrl());
+            this.lastLoadError = info;
+          }
+        })
+        .onHttpErrorReceive((event) => {
+          if (event !== undefined && event !== null) {
+            const code = event.response.getResponseCode();
+            hilog.error(0x0000, TAG, 'http %{public}d url=%{public}s',
+              code, event.request.getRequestUrl());
+            this.lastLoadError = `HTTP ${code} @ ${event.request.getRequestUrl()}`;
+          }
+        })
+
+      if (this.bundleMissing || this.bootError.length > 0) {
+        this.diagnosePanel()
+      }
     }
     .width('100%')
     .height('100%')
