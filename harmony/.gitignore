@@ -9,6 +9,5 @@ local.properties
 *.hap
 *.hsp
 *.har
-# 前端产物（由 scripts/sync-web.sh 生成）
-entry/src/main/resources/rawfile/www/*
-!entry/src/main/resources/rawfile/www/README.txt
+# 前端产物（harmony/entry/src/main/resources/rawfile/www/）随仓库提交：
+# 这样没有 Node 的构建环境（云实例/HAP 专用机）解压即可 Build，无需先跑 build-web.sh。
