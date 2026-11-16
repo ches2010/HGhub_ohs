@@ -60,6 +60,27 @@ export async function addPluginListener(
   event: string,
   cb: (...args: Json[]) => void,
 ): Promise<{ unregister: () => Promise<void> }> {
+  if (!hasHarmonyBridge()) {
+    // 测试 fixture / Tauri 桌面：走 Tauri 官方插件事件协议（transformCallback + register_listener），
+    // 让基于 __TAURI_INTERNALS__ 的 mock（如 scripts/fixtures/app-ui.mjs）能接住返回键通道。
+    const internals = (window as unknown as {
+      __TAURI_INTERNALS__?: {
+        invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+        transformCallback?: (cb: (...args: unknown[]) => unknown) => number;
+      };
+    }).__TAURI_INTERNALS__;
+    if (internals?.transformCallback) {
+      const handler = internals.transformCallback(cb);
+      await internals.invoke(`plugin:${plugin}|register_listener`, { event, handler });
+      return {
+        unregister: async () => {
+          await internals
+            .invoke(`plugin:${plugin}|unregister_listener`, { event, handler })
+            .catch(() => {});
+        },
+      };
+    }
+  }
   if (plugin !== "app" || event !== "back-button") {
     throw `尚未支持的事件：${plugin}/${event}`;
   }
@@ -120,6 +141,14 @@ const decoder = new TextDecoder("utf-8");
     p.reject(payload);
   }
 };
+
+/** 是否运行在鸿蒙宿主（ArkTS 已通过 registerJavaScriptProxy 注入 window.hghub）。
+ *  未注入时（CI 的 Playwright fixture、Tauri 桌面端）由 invoke() 回退到
+ *  Tauri 的 __TAURI_INTERNALS__.invoke 通道，保证测试与桌面端不被别名劫持卡死。 */
+export function hasHarmonyBridge(): boolean {
+  return typeof window !== "undefined" &&
+    !!(window as unknown as { hghub?: unknown }).hghub;
+}
 
 function native(): Record<string, (...args: any[]) => void> {
   const bridge = (window as unknown as { hghub?: Record<string, (...args: any[]) => void> }).hghub;
@@ -547,6 +576,14 @@ function notPorted(cmd: string): never {
 
 export async function invoke<T = Json>(cmd: string, args: Record<string, Json> = {}): Promise<T> {
   const a = args ?? {};
+  if (!hasHarmonyBridge()) {
+    const tauri = (window as unknown as {
+      __TAURI_INTERNALS__?: { invoke: (c: string, a?: Record<string, Json>) => Promise<unknown> };
+    }).__TAURI_INTERNALS__;
+    if (tauri) {
+      return (await tauri.invoke(cmd, a)) as T;
+    }
+  }
   switch (cmd) {
     /* —— 启动 / 会话 —— */
     case "app_boot": {
@@ -848,8 +885,14 @@ export async function invoke<T = Json>(cmd: string, args: Record<string, Json> =
   }
 }
 
-/** clipboard.ts 里会用 isTauri 判断是否走 Tauri 剪贴板插件 */
-export const isTauri = true;
+/** clipboard.ts 里会用 isTauri() 判断是否走 Tauri 剪贴板插件。
+ *  与官方 @tauri-apps/api 语义一致：鸿蒙宿主恒为 true；其余环境看
+ *  window.isTauri（测试 fixture 用它模拟 Tauri 环境）。 */
+export function isTauri(): boolean {
+  if (hasHarmonyBridge()) return true;
+  const flag = (window as unknown as { isTauri?: boolean }).isTauri;
+  return flag === true;
+}
 
 /** 启动时把当前线路同步给 ArkTS 侧（媒体代理要用它做 Referer） */
 export function syncBaseToNative(): void {
