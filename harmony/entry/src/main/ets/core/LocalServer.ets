@@ -228,6 +228,12 @@ export class LocalServer {
     const query = q < 0 ? '' : target.substring(q + 1);
     const upstream = param(query, 'u');
 
+    // 自检端点：用原生 http 打一下这里，就能区分「服务没起来」还是「WebView 加载被拦」
+    if (path === '/__ping') {
+      const body = `pong bundle=${this.bundleReady ? '1' : '0'} port=${this.port}`;
+      await this.send(client, 200, 'OK', 'text/plain; charset=utf-8', encodeText(body), []);
+      return;
+    }
     if (path === '/hls') {
       await this.servePlaylist(client, upstream);
       return;

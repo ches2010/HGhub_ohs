@@ -1,20 +1,29 @@
 import { common } from '@kit.AbilityKit';
 import { webview } from '@kit.ArkWeb';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { util } from '@kit.ArkTS';
 import { LocalServer } from '../core/LocalServer';
 import { Bridge, setSharedBridge } from '../core/Bridge';
+import { httpRequest } from '../core/Http';
 
 const TAG: string = 'HGhubX';
 const PORT: number = 17860;
+/** 本地服务起来后多久还没 onPageEnd 就认为异常（毫秒） */
+const LOAD_WATCHDOG_MS: number = 6000;
 
 @Entry
 @Component
 struct Index {
+  /** 固定为 about:blank；真实页面用 controller.loadUrl 显式加载，
+   *  避免「改 @State 驱动 Web.src」在某些 ArkWeb 版本上不触发重新加载导致白屏。 */
   @State pageUrl: string = 'about:blank';
-  /** rawfile/www 里没有前端产物：用 ArkUI 直接盖一层说明，不依赖 Web 能渲染出来 */
+  @State targetUrl: string = '';
   @State bundleMissing: boolean = false;
   @State bootError: string = '';
   @State lastLoadError: string = '';
+  @State pageLoaded: boolean = false;
+  @State diagOpen: boolean = false;
+  @State pingResult: string = '';
   private controller: webview.WebviewController = new webview.WebviewController();
   private server: LocalServer | null = null;
   private bridge: Bridge | null = null;
@@ -25,7 +34,6 @@ struct Index {
     const bridge = new Bridge(context);
     bridge.attach(this.controller);
     this.bridge = bridge;
-    // 让 UIAbility.onBackPressed 能拿到同一个实例
     setSharedBridge(bridge);
 
     const server = new LocalServer(context.resourceManager, PORT, () => {
@@ -34,21 +42,56 @@ struct Index {
     });
     this.server = server;
     server.start().then(() => {
-      hilog.info(0x0000, TAG, 'local server on %{public}s, bundle=%{public}s',
-        server.pageUrl(), String(server.hasBundle()));
-      this.bundleMissing = !server.hasBundle();
-      this.pageUrl = server.pageUrl();
+      const bundle = server.hasBundle();
+      const url = server.pageUrl();
+      hilog.info(0x0000, TAG, 'local server on %{public}s bundle=%{public}s', url, String(bundle));
+      this.bundleMissing = !bundle;
+      this.targetUrl = url;
+      if (!bundle) {
+        this.diagOpen = true;
+        return;
+      }
+      this.loadTarget(url);
+      // 看门狗：服务起来了但页面迟迟没有 onPageEnd，就把诊断面板顶出来
+      setTimeout(() => {
+        if (!this.pageLoaded) {
+          hilog.error(0x0000, TAG, 'page not loaded in %{public}dms, running ping', LOAD_WATCHDOG_MS);
+          this.diagOpen = true;
+          this.runPing();
+        }
+      }, LOAD_WATCHDOG_MS);
     }).catch((err: Error) => {
       hilog.error(0x0000, TAG, 'local server failed: %{public}s', err.message);
       this.bootError = err.message;
-      const html = `<html><body style="background:#111;color:#eee;font:16px sans-serif;padding:24px">`
-        + `<h3>本地服务启动失败</h3><p>${err.message}</p>`
-        + `<p>端口 ${PORT} 可能被占用，或缺少 ohos.permission.INTERNET。</p></body></html>`;
-      this.pageUrl = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+      this.diagOpen = true;
     });
   }
 
-  /** 取 UIAbilityContext：优先新写法，取不到再退回已废弃的 getContext */
+  /** 显式 loadUrl；控制器还没 attach 时退回改 @State */
+  private loadTarget(url: string): void {
+    try {
+      this.controller.loadUrl(url);
+      hilog.info(0x0000, TAG, 'loadUrl %{public}s', url);
+    } catch (e) {
+      const message = e !== undefined && e !== null ? (e as Error).message : '';
+      hilog.warn(0x0000, TAG, 'loadUrl failed (%{public}s), fallback to src', message);
+      this.pageUrl = url;
+    }
+  }
+
+  /** 用原生 http 打本地服务：能通 → 服务没问题，白屏在 WebView 侧；不通 → 服务/端口问题 */
+  private runPing(): void {
+    const url = `http://127.0.0.1:${PORT}/__ping`;
+    httpRequest(url, 'GET', '{}', '', true, 4000).then((r) => {
+      const text = new util.TextDecoder().decodeToString(new Uint8Array(r.bytes));
+      this.pingResult = `HTTP ${r.status} · ${text}`;
+      hilog.info(0x0000, TAG, 'ping ok: %{public}s', this.pingResult);
+    }).catch((e: Error) => {
+      this.pingResult = `失败：${e.message}`;
+      hilog.error(0x0000, TAG, 'ping failed: %{public}s', e.message);
+    });
+  }
+
   private abilityContext(): common.UIAbilityContext {
     try {
       const host = this.getUIContext().getHostContext();
@@ -56,7 +99,6 @@ struct Index {
         return host as common.UIAbilityContext;
       }
     } catch (e) {
-      // 低版本 SDK 没有 getUIContext()，走下面的兜底
     }
     return getContext(this) as common.UIAbilityContext;
   }
@@ -69,43 +111,66 @@ struct Index {
     }
   }
 
+  private reload(): void {
+    this.pageLoaded = false;
+    this.lastLoadError = '';
+    if (this.targetUrl.length > 0) {
+      this.loadTarget(this.targetUrl);
+    }
+    this.diagOpen = false;
+  }
+
   @Builder
   diagnosePanel() {
-    Column({ space: 10 }) {
-      Text(this.bundleMissing ? 'App 里没有前端页面（这就是白屏原因）' : '加载失败')
-        .fontSize(18)
-        .fontColor('#ff8a80')
+    Column({ space: 8 }) {
+      Text(this.bundleMissing ? 'App 里没有前端页面' : (this.pageLoaded ? '页面已加载（面板可关闭）' : '页面没有加载出来'))
+        .fontSize(17)
+        .fontColor(this.bundleMissing || !this.pageLoaded ? '#ff8a80' : '#8fd694')
         .fontWeight(FontWeight.Bold)
-      if (this.bundleMissing) {
-        Text('entry/src/main/resources/rawfile/www/ 是空的（只有 README.txt），LocalServer 取不到 index.html。')
-          .fontSize(13)
-          .fontColor('#cccccc')
-        Text('修复（在仓库根执行）：\n1) node harmony/patches/apply-patch.mjs .\n2) harmony/scripts/build-web.sh\n3) 重新 Build HAP')
-          .fontSize(13)
-          .fontColor('#eeeeee')
+
+      Text(`bundle=${this.bundleMissing ? 'missing' : 'ok'}  loaded=${this.pageLoaded ? 'yes' : 'no'}`)
+        .fontSize(12).fontColor('#9e9e9e')
+
+      if (this.targetUrl.length > 0) {
+        Text(`目标：${this.targetUrl}`).fontSize(12).fontColor('#cccccc')
       }
       if (this.bootError.length > 0) {
-        Text(`本地服务启动失败：${this.bootError}`)
-          .fontSize(13)
-          .fontColor('#eeeeee')
-        Text(`端口 ${PORT} 可能被占用`).fontSize(12).fontColor('#999999')
+        Text(`本地服务启动失败：${this.bootError}`).fontSize(12).fontColor('#eeeeee')
+        Text(`端口 ${PORT} 可能被占用`).fontSize(11).fontColor('#999999')
+      }
+      if (this.bundleMissing) {
+        Text('rawfile/www 里没有 index.html。修复：\n1) node harmony/patches/apply-patch.mjs .\n2) harmony/scripts/build-web.sh\n3) 重新 Build HAP\n（或用仓库自带的产物，重新解压 zip）')
+          .fontSize(12).fontColor('#eeeeee')
       }
       if (this.lastLoadError.length > 0) {
-        Text(`最近一次加载错误：${this.lastLoadError}`)
-          .fontSize(12)
-          .fontColor('#aaaaaa')
+        Text(`Web 加载错误：${this.lastLoadError}`).fontSize(12).fontColor('#ffcc80')
       }
-      Text('完整日志：hdc shell hilog | grep HGhubX')
-        .fontSize(12)
-        .fontColor('#888888')
+      if (this.pingResult.length > 0) {
+        Text(`本地服务自检：${this.pingResult}`).fontSize(12).fontColor('#90caf9')
+      }
+      if (this.pingResult.length === 0 && !this.bundleMissing) {
+        Text('（6 秒内未加载完成会自动做一次本地服务自检）').fontSize(11).fontColor('#777777')
+      }
+
+      Row({ space: 10 }) {
+        Button('重新加载').fontSize(13).height(32)
+          .onClick(() => this.reload())
+        Button('自检').fontSize(13).height(32)
+          .onClick(() => this.runPing())
+        Button('收起').fontSize(13).height(32)
+          .onClick(() => { this.diagOpen = false; })
+      }.margin({ top: 4 })
+
+      Text('详细日志：hdc shell hilog | grep HGhubX').fontSize(11).fontColor('#777777')
     }
-    .padding(20)
+    .alignItems(HorizontalAlign.Start)
+    .padding(18)
     .width('100%')
     .backgroundColor('#111111')
   }
 
   build() {
-    Stack() {
+    Stack({ alignContent: Alignment.Bottom }) {
       Web({ src: this.pageUrl, controller: this.controller })
         .javaScriptAccess(true)
         .domStorageAccess(true)
@@ -127,20 +192,21 @@ struct Index {
             'hghub',
             ['http', 'setBase', 'openUrl', 'setOrientation', 'log', 'clearCache', 'setBackEnabled', 'background', 'netInfo']
           );
-          // registerJavaScriptProxy 在页面开始加载后注册需要刷新一次才生效
-          this.controller.refresh();
+          // 服务可能已经起来了：attach 之后补一次加载
+          if (this.targetUrl.length > 0 && !this.pageLoaded) {
+            this.loadTarget(this.targetUrl);
+          }
         })
         .onPageEnd(() => {
-          hilog.info(0x0000, TAG, 'page loaded: %{public}s', this.pageUrl);
+          this.pageLoaded = true;
+          this.diagOpen = this.bundleMissing;
+          hilog.info(0x0000, TAG, 'page loaded ok');
           const bridge = this.bridge;
           if (bridge !== null) {
             bridge.setPageReady();
           }
         })
         .onConsole((event): boolean => {
-          // 前端的 console 直接进 hilog：白屏时第一时间就能看到 JS 报错。
-          // 注意：ArkWeb 的 onConsole 签名是 Callback<OnConsoleEvent, boolean>，
-          // 返回 true = 该条消息已由我们处理，不再交给系统默认打印。
           if (event !== undefined && event !== null) {
             hilog.info(0x0000, TAG, 'web console: %{public}s', event.message.getMessage());
           }
@@ -151,7 +217,11 @@ struct Index {
             const info = event.error.getErrorInfo();
             hilog.error(0x0000, TAG, 'load error: %{public}s url=%{public}s',
               info, event.request.getRequestUrl());
-            this.lastLoadError = info;
+            this.lastLoadError = `${info} @ ${event.request.getRequestUrl()}`;
+            if (!this.pageLoaded) {
+              this.diagOpen = true;
+              this.runPing();
+            }
           }
         })
         .onHttpErrorReceive((event) => {
@@ -160,10 +230,14 @@ struct Index {
             hilog.error(0x0000, TAG, 'http %{public}d url=%{public}s',
               code, event.request.getRequestUrl());
             this.lastLoadError = `HTTP ${code} @ ${event.request.getRequestUrl()}`;
+            if (!this.pageLoaded) {
+              this.diagOpen = true;
+              this.runPing();
+            }
           }
         })
 
-      if (this.bundleMissing || this.bootError.length > 0) {
+      if (this.diagOpen || this.bundleMissing || this.bootError.length > 0) {
         this.diagnosePanel()
       }
     }
