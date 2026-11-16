@@ -212,6 +212,13 @@ Mate 80 上第一次 `assembleHap` 报了 7 个错误 + 12 个告警，已全部
 
 ## 5.7 真机白屏排查（第一次装机最可能踩的坑）
 
+> **现状（2026-11-16 之后）**：前端产物已通过 CI 提交进仓库
+> （`harmony/entry/src/main/resources/rawfile/www/`：`index.html` + `assets/*.js/css` + `logo.svg`，约 1.1 MB），
+> `.gitignore` 也去掉了对该目录的排除。直接 clone / 解压 zip 就能 Build，**不再需要本地 Node**。
+> 下面的排查流程保留给"改了前端却忘了重新生成产物"或产物被清空的情况。
+
+
+
 **头号原因：`rawfile/www/` 是空的。** 该目录被 `.gitignore` 排除，从仓库/zip 拿到的工程里只有 `README.txt`，
 LocalServer 取不到 `index.html`，页面自然全白。排查顺序：
 

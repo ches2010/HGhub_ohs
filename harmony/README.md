@@ -18,25 +18,25 @@ harmony/
 └── docs/PORTING.md                验证状态、装机步骤、风险清单
 ```
 
-## 在仓库根执行
+## 构建
 
-```bash
-# 1) 打补丁（把 hg-bridge 注入 src/，改 api.ts 与 vite.config.ts）
-node harmony/patches/apply-patch.mjs .
-
-# 2) 构建前端并同步进 App 资源
-harmony/scripts/sync-web.sh
-
-# 3) DevEco Studio 打开 harmony/ → 选 SDK → 自动签名 → Build Hap(s)
-```
-
-命令行编译与安装：
+前端产物（`entry/src/main/resources/rawfile/www/`）已随仓库提交，**直接 Build 即可**：
 
 ```bash
 cd harmony
 ./hvigorw --mode module -p module=entry@default -p product=default assembleHap
 hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 ```
+
+只改过 ArkTS/ETS 时不需要做别的；**改过 `src/` 前端代码**时才需要重新生成产物：
+
+```bash
+# 在仓库根执行（需要 Node 20+；没有 node 就先跑 scripts/bootstrap-node.sh）
+node harmony/patches/apply-patch.mjs .     # 幂等
+harmony/scripts/build-web.sh               # 构建并同步进 rawfile/www
+```
+
+也可以在 GitHub Actions 里手动跑 `Harmony web bundle`，由 runner 构建并提交产物。
 
 详细步骤、真机自检顺序、已移植/未移植清单、已知风险都在 [`docs/PORTING.md`](docs/PORTING.md)。
 

@@ -45,22 +45,22 @@ Rust 侧的业务接口收敛成一个信封（`POST /api/edge/request`），所
 
 ### 快速开始
 
-> 不方便 clone 的话，仓库根的 `HGhub_ohs_harmony.zip` 就是同一份工程（含 `harmony/` 与根 README），下载解压即可。
+> **前端产物已随仓库提交**（`harmony/entry/src/main/resources/rawfile/www/`，约 1.1 MB）。
+> 所以下面第 1、2 步只是"改了前端才需要重做"的步骤；只改 ArkTS/页面时，直接跳到第 3 步。
 >
-> 如果 DevEco 每次报的都是同一批错误（`clearCache` / `toArrayBuffer` / `getContext`），说明构建目录还是旧的解压副本，
-> 跑 `harmony/scripts/fix-stale-build.sh <你的 harmony 目录>` 同步那 5 个文件就行。
+> 也可以直接下载仓库根的 `HGhub_ohs_harmony.zip`（含 `harmony/` 与根 README，自带产物），解压后从第 3 步开始。
 
 ```bash
 git clone https://github.com/ches2010/HGhub_ohs.git && cd HGhub_ohs
 
-# 1) 打补丁：注入 src/hg-bridge，改 src/api.ts 与 vite.config.ts
-node harmony/patches/apply-patch.mjs .
+# 1) 改过 src/ 前端代码时才需要：打补丁 + 重新构建产物
+node harmony/patches/apply-patch.mjs .     # 幂等
+harmony/scripts/build-web.sh               # 装依赖 + 构建 + 同步进 rawfile/www
 
-# 2) 构建前端并同步进 App 资源
-pnpm install && pnpm build
-harmony/scripts/sync-web.sh
+#   不想在本地装 Node：在 Actions 里跑 `Harmony web bundle`（workflow_dispatch），
+#   它会在 runner 上构建并把产物提交回仓库。
 
-# 3) DevEco Studio 打开 harmony/ → 选本机 SDK → 自动签名 → Build Hap(s)
+# 2) DevEco Studio 打开 harmony/ → 选本机 SDK → 自动签名 → Build Hap(s)
 cd harmony
 ./hvigorw --mode module -p module=entry@default -p product=default assembleHap
 hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
