@@ -145,7 +145,7 @@ const decoder = new TextDecoder("utf-8");
 /** 是否运行在鸿蒙宿主（ArkTS 已通过 registerJavaScriptProxy 注入 window.hghub）。
  *  未注入时（CI 的 Playwright fixture、Tauri 桌面端）由 invoke() 回退到
  *  Tauri 的 __TAURI_INTERNALS__.invoke 通道，保证测试与桌面端不被别名劫持卡死。 */
-function hasHarmonyBridge(): boolean {
+export function hasHarmonyBridge(): boolean {
   return typeof window !== "undefined" &&
     !!(window as unknown as { hghub?: unknown }).hghub;
 }
@@ -885,8 +885,14 @@ export async function invoke<T = Json>(cmd: string, args: Record<string, Json> =
   }
 }
 
-/** clipboard.ts 里会用 isTauri 判断是否走 Tauri 剪贴板插件 */
-export const isTauri = true;
+/** clipboard.ts 里会用 isTauri() 判断是否走 Tauri 剪贴板插件。
+ *  与官方 @tauri-apps/api 语义一致：鸿蒙宿主恒为 true；其余环境看
+ *  window.isTauri（测试 fixture 用它模拟 Tauri 环境）。 */
+export function isTauri(): boolean {
+  if (hasHarmonyBridge()) return true;
+  const flag = (window as unknown as { isTauri?: boolean }).isTauri;
+  return flag === true;
+}
 
 /** 启动时把当前线路同步给 ArkTS 侧（媒体代理要用它做 Referer） */
 export function syncBaseToNative(): void {
