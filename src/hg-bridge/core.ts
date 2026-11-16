@@ -60,6 +60,27 @@ export async function addPluginListener(
   event: string,
   cb: (...args: Json[]) => void,
 ): Promise<{ unregister: () => Promise<void> }> {
+  if (!hasHarmonyBridge()) {
+    // 测试 fixture / Tauri 桌面：走 Tauri 官方插件事件协议（transformCallback + register_listener），
+    // 让基于 __TAURI_INTERNALS__ 的 mock（如 scripts/fixtures/app-ui.mjs）能接住返回键通道。
+    const internals = (window as unknown as {
+      __TAURI_INTERNALS__?: {
+        invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+        transformCallback?: (cb: (...args: unknown[]) => unknown) => number;
+      };
+    }).__TAURI_INTERNALS__;
+    if (internals?.transformCallback) {
+      const handler = internals.transformCallback(cb);
+      await internals.invoke(`plugin:${plugin}|register_listener`, { event, handler });
+      return {
+        unregister: async () => {
+          await internals
+            .invoke(`plugin:${plugin}|unregister_listener`, { event, handler })
+            .catch(() => {});
+        },
+      };
+    }
+  }
   if (plugin !== "app" || event !== "back-button") {
     throw `尚未支持的事件：${plugin}/${event}`;
   }
