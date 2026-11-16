@@ -40,6 +40,20 @@ harmony/scripts/build-web.sh               # 构建并同步进 rawfile/www
 
 详细步骤、真机自检顺序、已移植/未移植清单、已知风险都在 [`docs/PORTING.md`](docs/PORTING.md)。
 
+## 命令行构建的前提
+
+工程里没有 `hvigorw` / `hvigorw.bat` / `hvigor/hvigor-wrapper.js` —— 这三个由 **DevEco Studio 在打开工程时生成**
+（模板机制），我的骨架是从零写的，不含它们。所以：
+
+- **用 DevEco Studio 打开一次 `harmony/`**（等 Sync 完成），它会补齐上述文件与 `.hvigor/` 缓存，
+  之后 `./hvigorw --mode module -p module=entry@default -p product=default assembleHap` 就能用；
+- 或者从任意一个已能构建的 DevEco 工程里把 `hvigorw`、`hvigorw.bat`、`hvigor/hvigor-wrapper.js`
+  拷到本工程对应位置（`hvigorfile.ts` 与 `hvigor/hvigor-config.json5` 保持本工程的）；
+- 直接用 DevEco 的 Build 菜单也完全等价，不依赖 `hvigorw`。
+
+`hvigor-wrapper.js` 首次运行会从 `https://ohpm.openharmony.cn/ohpm/` 拉取 `@ohos/hvigor`，
+所以命令行构建要求这台机器能访问 ohpm 源（不能访问 GitHub 不影响）。
+
 ## 许可
 
 沿用上游 PolyForm Noncommercial 1.0.0：仅限个人学习、自用与非营利使用，禁止商业分发。

@@ -72,7 +72,9 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 hdc shell aa start -a EntryAbility -b com.hghubx.harmony
 ```
 
-命令行等价编译：
+命令行等价编译（**前提**：`hvigorw` 由 DevEco 打开工程时生成，本仓库未包含；
+若报 `./hvigorw: 没有那个文件或目录`，先让 DevEco 打开一次 `harmony/`，或从可构建的 DevEco 工程拷来
+`hvigorw` + `hvigor/hvigor-wrapper.js`）：
 
 ```bash
 ./hvigorw --mode module -p module=entry@default -p product=default assembleHap
