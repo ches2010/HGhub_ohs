@@ -22,9 +22,10 @@ if [ ! -f "$REPO_ROOT/package.json" ]; then
 fi
 
 if ! command -v node >/dev/null 2>&1; then
-  echo "找不到 node。两种办法：" >&2
-  echo "  1) 安装 Node 20+；" >&2
+  echo "找不到 node。三种办法：" >&2
+  echo "  1) 一键准备（无需 root，适合云实例/CI）：bash harmony/scripts/bootstrap-node.sh --mirror" >&2
   echo "  2) 用 DevEco 自带的：export PATH=\"<DevEco 安装目录>/tools/node/bin:\$PATH\"" >&2
+  echo "  3) 自行安装 Node 20+" >&2
   exit 1
 fi
 echo "node $(node -v)"
