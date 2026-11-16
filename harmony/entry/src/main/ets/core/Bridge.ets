@@ -220,11 +220,15 @@ export class Bridge {
     return snapshot;
   }
 
+  /**
+   * 前端「清除缓存」。
+   *
+   * 这里刻意**不做** `WebStorage.deleteAllData()`：那会顺带清掉 localStorage 里的
+   * 登录态、线路选择与观看记录，而 Rust 版清的是内存里的封面/播放列表缓存。
+   * 移植版的媒体代理（LocalServer）本身不做内容缓存，静态资源由
+   * `Cache-Control: no-cache` 控制，所以最贴近原语义的是「无可清理 + 记一条日志」。
+   */
   clearCache(): void {
-    const controller = this.controller;
-    if (controller === null) {
-      return;
-    }
-    controller.clearCache();
+    hilog.info(0x0000, TAG, 'cache_clear requested (no in-memory cache in HarmonyOS port)');
   }
 }

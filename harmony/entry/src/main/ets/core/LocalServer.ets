@@ -133,8 +133,14 @@ export class LocalServer {
     if (this.running) {
       return;
     }
-    const server = socket.constructTCPSocketServerInstance();
-    await server.listen({ address: '127.0.0.1', port: this.port, family: 1 });
+    let server: socket.TCPSocketServer;
+    try {
+      server = socket.constructTCPSocketServerInstance();
+      await server.listen({ address: '127.0.0.1', port: this.port, family: 1 });
+    } catch (e) {
+      const message = e !== undefined && e !== null ? (e as Error).message : '';
+      throw new Error(`本地服务无法监听 127.0.0.1:${this.port}（${message}）`);
+    }
     server.on('connect', (client: socket.TCPSocketConnection) => {
       this.accept(client);
     });

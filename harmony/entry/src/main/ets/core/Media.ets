@@ -18,12 +18,6 @@ function asciiBytes(s: string): Uint8Array {
   return out;
 }
 
-function toArrayBuffer(view: Uint8Array): ArrayBuffer {
-  const out = new ArrayBuffer(view.byteLength);
-  new Uint8Array(out).set(view);
-  return out;
-}
-
 export function startsWithBytes(buf: Uint8Array, sig: number[]): boolean {
   if (buf.byteLength < sig.length) {
     return false;
@@ -65,20 +59,26 @@ export function looksLikePlaylist(buf: Uint8Array): boolean {
   return buf.byteLength >= 10 && startsWithBytes(buf, [0xEF, 0xBB, 0xBF, 0x23, 0x45, 0x58, 0x54, 0x4D, 0x33, 0x55]);
 }
 
-/** AES-128-CBC/NoPadding 解密（Padding 由调用方 stripPadding 处理）。 */
+/**
+ * AES-128-CBC/NoPadding 解密（Padding 由调用方 stripPadding 处理）。
+ *
+ * 注意：HarmonyOS 的 cryptoFramework 要求 DataBlob.data 是 **Uint8Array**，
+ * 传 ArrayBuffer 会直接编译报错（"Type 'ArrayBuffer' is missing ... from type 'Uint8Array'"）。
+ */
 export async function aesCbcDecrypt(data: Uint8Array): Promise<Uint8Array> {
   if (data.byteLength === 0 || data.byteLength % 16 !== 0) {
     throw new Error('封面密文长度非法');
   }
-  const symKey = await cryptoFramework.createSymKeyGenerator('AES128').convertKey({ data: toArrayBuffer(asciiBytes(IMG_KEY)) });
+  const generator = cryptoFramework.createSymKeyGenerator('AES128');
+  const symKey = await generator.convertKey({ data: asciiBytes(IMG_KEY) });
   const cipher = cryptoFramework.createCipher('AES128|CBC|NoPadding');
   const spec: cryptoFramework.IvParamsSpec = {
     algName: 'IvParamsSpec',
-    iv: { data: toArrayBuffer(asciiBytes(IMG_IV)) }
+    iv: { data: asciiBytes(IMG_IV) }
   };
   await cipher.init(cryptoFramework.CryptoMode.DECRYPT_MODE, symKey, spec);
-  const plain = await cipher.doFinal({ data: toArrayBuffer(data) });
-  return new Uint8Array(plain.data);
+  const plain: cryptoFramework.DataBlob = await cipher.doFinal({ data: data });
+  return plain.data;
 }
 
 export function stripPadding(buf: Uint8Array): Uint8Array {

@@ -74,7 +74,14 @@ export async function httpRequest(
     if (body.length > 0 && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
       options.extraData = body;
     }
-    const resp = await request.request(url, options);
+    let resp: http.HttpResponse;
+    try {
+      resp = await request.request(url, options);
+    } catch (e) {
+      // ArkTS 要求对可能抛异常的调用显式处理；这里转成明文错误往上抛
+      const message = e !== undefined && e !== null ? (e as Error).message : '';
+      throw new Error(message.length > 0 ? message : '网络请求失败');
+    }
     return { status: resp.responseCode as number, bytes: toBuffer(resp.result) };
   } finally {
     request.destroy();

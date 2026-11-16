@@ -17,7 +17,7 @@ struct Index {
   private registered: boolean = false;
 
   aboutToAppear(): void {
-    const context = getContext(this) as common.UIAbilityContext;
+    const context = this.abilityContext();
     const bridge = new Bridge(context);
     bridge.attach(this.controller);
     this.bridge = bridge;
@@ -39,6 +39,19 @@ struct Index {
         <p>端口 ${PORT} 可能被占用，或缺少 ohos.permission.INTERNET。</p></body></html>`;
       this.pageUrl = `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
     });
+  }
+
+  /** 取 UIAbilityContext：优先新写法，取不到再退回已废弃的 getContext */
+  private abilityContext(): common.UIAbilityContext {
+    try {
+      const host = this.getUIContext().getHostContext();
+      if (host !== undefined) {
+        return host as common.UIAbilityContext;
+      }
+    } catch (e) {
+      // 低版本 SDK 没有 getUIContext()，走下面的兜底
+    }
+    return getContext(this) as common.UIAbilityContext;
   }
 
   aboutToDisappear(): void {
