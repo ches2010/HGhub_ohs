@@ -72,12 +72,14 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 hdc shell aa start -a EntryAbility -b com.hghubx.harmony
 ```
 
-命令行等价编译（**前提**：`hvigorw` 由 DevEco 打开工程时生成，本仓库未包含；
-若报 `./hvigorw: 没有那个文件或目录`，先让 DevEco 打开一次 `harmony/`，或从可构建的 DevEco 工程拷来
-`hvigorw` + `hvigor/hvigor-wrapper.js`）：
+命令行等价编译：工程内没有 `hvigorw`（由 DevEco / command-line-tools 提供），用工具链的全局入口：
 
 ```bash
-./hvigorw --mode module -p module=entry@default -p product=default assembleHap
+CT=/mnt/workspace/tools/harmonyos/command-line-tools
+export DEVECO_SDK_HOME=$CT/sdk
+export PATH="$CT/bin:$CT/hvigor/bin:$CT/ohpm/bin:$PATH"
+cd harmony && hvigorw --mode module -p module=entry@default -p product=default assembleHap
+# 或：bash harmony/scripts/build-hap.sh（自动发现工具链 + 校验前端产物）
 ```
 
 ## 3. 真机自检顺序（出问题按这个顺序定位）

@@ -40,20 +40,35 @@ harmony/scripts/build-web.sh               # 构建并同步进 rawfile/www
 
 详细步骤、真机自检顺序、已移植/未移植清单、已知风险都在 [`docs/PORTING.md`](docs/PORTING.md)。
 
-## 命令行构建的前提
+## 命令行构建
 
-工程里没有 `hvigorw` / `hvigorw.bat` / `hvigor/hvigor-wrapper.js` —— 这三个由 **DevEco Studio 在打开工程时生成**
-（模板机制），我的骨架是从零写的，不含它们。所以：
+工程里**不含** `hvigorw` / `hvigorw.bat` / `hvigor/hvigor-wrapper.js`——它们由 DevEco Studio 或
+HarmonyOS command-line-tools 提供，不是项目源码的一部分。所以不要在工程里找 `./hvigorw`。
 
-- **用 DevEco Studio 打开一次 `harmony/`**（等 Sync 完成），它会补齐上述文件与 `.hvigor/` 缓存，
-  之后 `./hvigorw --mode module -p module=entry@default -p product=default assembleHap` 就能用；
-- 或者从任意一个已能构建的 DevEco 工程里把 `hvigorw`、`hvigorw.bat`、`hvigor/hvigor-wrapper.js`
-  拷到本工程对应位置（`hvigorfile.ts` 与 `hvigor/hvigor-config.json5` 保持本工程的）；
-- 直接用 DevEco 的 Build 菜单也完全等价，不依赖 `hvigorw`。
+**推荐：用工具链的全局 hvigorw**（在 `harmony/` 目录下执行）：
 
-`hvigor-wrapper.js` 首次运行会从 `https://ohpm.openharmony.cn/ohpm/` 拉取 `@ohos/hvigor`，
-所以命令行构建要求这台机器能访问 ohpm 源（不能访问 GitHub 不影响）。
+```bash
+CT=/mnt/workspace/tools/harmonyos/command-line-tools   # 改成你的安装路径
+export DEVECO_SDK_HOME=$CT/sdk
+export PATH="$CT/bin:$CT/hvigor/bin:$CT/ohpm/bin:$PATH"
 
-## 许可
+cd harmony
+hvigorw --mode module -p module=entry@default -p product=default assembleHap
+```
+
+或者直接用脚本（自动发现工具链、SDK、node，并检查前端产物）：
+
+```bash
+bash harmony/scripts/build-hap.sh
+# 自定义路径：HARMONY_CLI_HOME=/your/command-line-tools bash harmony/scripts/build-hap.sh
+```
+
+也可以让 DevEco Studio 打开一次 `harmony/`，它会生成工程内的 `hvigorw`，之后 `./hvigorw ...` 同样可用；
+GUI 的 Build 菜单本就等价。
+
+> `hvigor-wrapper.js` / 全局 hvigorw 首次运行会从 `https://ohpm.openharmony.cn/ohpm/` 取 `@ohos/hvigor`，
+> 所以构建机需要能访问 ohpm 源（不能访问 GitHub 不影响）。
+
+## 许可## 许可
 
 沿用上游 PolyForm Noncommercial 1.0.0：仅限个人学习、自用与非营利使用，禁止商业分发。
