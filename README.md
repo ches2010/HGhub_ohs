@@ -60,9 +60,10 @@ harmony/scripts/build-web.sh               # 装依赖 + 构建 + 同步进 rawf
 #   不想在本地装 Node：在 Actions 里跑 `Harmony web bundle`（workflow_dispatch），
 #   它会在 runner 上构建并把产物提交回仓库。
 
-# 2) DevEco Studio 打开 harmony/ → 选本机 SDK → 自动签名 → Build Hap(s)
-cd harmony
-./hvigorw --mode module -p module=entry@default -p product=default assembleHap
+# 2) 构建 HAP：工程里不含 hvigorw（由 DevEco / command-line-tools 提供），
+#    推荐一键脚本（自动发现工具链与 SDK，默认 assembleHap，可透传自定义参数）；
+#    或用 DevEco Studio 打开 harmony/ → 选本机 SDK → 自动签名 → Build Hap(s)
+bash harmony/scripts/build-hap.sh
 hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 ```
 
