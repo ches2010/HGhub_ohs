@@ -8,10 +8,10 @@
       {
         "name": "default",
         "signingConfig": "default",
-        // ⚠️ compatibleSdkVersion 必须选你本机 DevEco 实际安装的 SDK：
-        // 鸿蒙 6/7 设备请选对应 API 版本（如 "6.0.0(20)" / 更高），
-        // 写死成旧版本会被新系统拒绝安装或直接编译告警。
-        "compatibleSdkVersion": "5.0.0(12)",
+        // compatibleSdkVersion 是「最低兼容 SDK」：6.0.0(20) 覆盖鸿蒙 6/7 真机
+        // （7 向下兼容 6 的 API；本工程只用 API 12 级能力）。若本机 DevEco
+        // 对该值报过旧告警，按提示升到本机 SDK 对应版本即可。
+        "compatibleSdkVersion": "6.0.0(20)",
         "runtimeOS": "HarmonyOS",
         "buildOption": {}
       }

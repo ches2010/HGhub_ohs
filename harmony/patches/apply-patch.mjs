@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * 把鸿蒙移植层打进 HGhubX 源码树。
+ * 把鸿蒙移植层打进 HGhubX 源码树（基线：上游 v2.2.0，src/shared/api/api.ts）。
  *
  *   node patches/apply-patch.mjs /path/to/HGhubX
  *
  * 做的事（幂等，可重复跑）：
  *   1. 复制 src/hg-bridge/*（invoke 复刻层）
- *   2. 改 src/api.ts：识别鸿蒙 UA、按移动端布局、媒体基址指向 loopback 服务
- *   3. 改 vite.config.ts：把 @tauri-apps/* 指到 hg-bridge
+ *   2. 改 src/shared/api/api.ts：识别鸿蒙 UA、按移动端布局、媒体基址指向 loopback 服务
+ *   3. 改 vite.config.ts：把 @tauri-apps/* 指到 hg-bridge（函数式配置内注入 alias）
  */
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -22,8 +22,13 @@ function fail(msg) {
   process.exit(1);
 }
 
-if (!existsSync(join(target, "src", "api.ts"))) {
-  fail(`看起来不是 HGhubX 源码目录：${target}（找不到 src/api.ts）`);
+const apiCandidates = [
+  join(target, "src", "shared", "api", "api.ts"), // 上游 v2.2.0+
+  join(target, "src", "api.ts"),                  // 上游 v2.0.0（旧基线兼容）
+];
+const apiPath = apiCandidates.find((p) => existsSync(p));
+if (!apiPath) {
+  fail(`看起来不是 HGhubX 源码目录：${target}（找不到 src/shared/api/api.ts 或 src/api.ts）`);
 }
 
 /* 1. 复制桥接层 */
@@ -34,8 +39,7 @@ for (const f of ["core.ts", "line.ts", "lines.ts", "update.ts", "window.ts", "cl
   console.log(`  ✓ src/hg-bridge/${f}`);
 }
 
-/* 2. src/api.ts 平台识别 */
-const apiPath = join(target, "src", "api.ts");
+/* 2. api.ts 平台识别 */
 let api = readFileSync(apiPath, "utf8");
 const original = api;
 
@@ -45,7 +49,7 @@ function replaceOnce(oldText, newText, label) {
     return;
   }
   if (!api.includes(oldText)) {
-    fail(`${label}：找不到预期原文，可能上游改版了，请手动修改 src/api.ts`);
+    fail(`${label}：找不到预期原文，可能上游改版了，请手动修改 ${apiPath}`);
   }
   api = api.replace(oldText, newText);
   console.log(`  ✓ ${label}`);
@@ -58,8 +62,8 @@ replaceOnce(
 );
 
 replaceOnce(
-  'export const platform: "android" | "ios" | "windows" | "macos" | "linux" =\n  isAndroid ? "android" : isIos ? "ios" : isMacos ? "macos" : isLinux ? "linux" : "windows";',
-  'export const platform: "android" | "ios" | "windows" | "macos" | "linux" =\n  isAndroid || isHarmony ? "android" : isIos ? "ios" : isMacos ? "macos" : isLinux ? "linux" : "windows";',
+  'export const platform: "android" | "ios" | "windows" | "macos" | "linux" =\n  isAndroid ? "android" :',
+  'export const platform: "android" | "ios" | "windows" | "macos" | "linux" =\n  isAndroid || isHarmony ? "android" :',
   "platform 归入移动端布局",
 );
 
@@ -77,7 +81,7 @@ replaceOnce(
 
 if (api !== original) writeFileSync(apiPath, api);
 
-/* 3. vite.config.ts 模块别名 */
+/* 3. vite.config.ts 模块别名（上游 v2.2.0 为函数式配置） */
 const vitePath = join(target, "vite.config.ts");
 let vite = readFileSync(vitePath, "utf8");
 const viteOriginal = vite;
@@ -92,19 +96,15 @@ if (!vite.includes("node:url")) {
 }
 
 if (!vite.includes("hg-bridge")) {
-  const anchor = "  plugins: [react(), tailwindcss()],";
-  if (!vite.includes(anchor)) fail("vite.config.ts：找不到 plugins 行");
+  const anchor = '        "@edition-bootstrap": fileURLToPath(';
+  if (!vite.includes(anchor)) fail("vite.config.ts：找不到 @edition-bootstrap alias 锚点");
   vite = vite.replace(
     anchor,
-    `${anchor}
-  // 鸿蒙移植层：把 Tauri 的模块换成 window.hghub 桥
-  resolve: {
-    alias: [
-      { find: "@tauri-apps/api/core", replacement: fileURLToPath(new URL("./src/hg-bridge/core.ts", import.meta.url)) },
-      { find: "@tauri-apps/api/window", replacement: fileURLToPath(new URL("./src/hg-bridge/window.ts", import.meta.url)) },
-      { find: "@tauri-apps/plugin-clipboard-manager", replacement: fileURLToPath(new URL("./src/hg-bridge/clipboard.ts", import.meta.url)) },
-    ],
-  },`,
+    `        // 鸿蒙移植层：把 Tauri 的模块换成 window.hghub 桥（本仓库移植新增）。\n` +
+    `        "@tauri-apps/api/core": fileURLToPath(new URL("./src/hg-bridge/core.ts", import.meta.url)),\n` +
+    `        "@tauri-apps/api/window": fileURLToPath(new URL("./src/hg-bridge/window.ts", import.meta.url)),\n` +
+    `        "@tauri-apps/plugin-clipboard-manager": fileURLToPath(new URL("./src/hg-bridge/clipboard.ts", import.meta.url)),\n` +
+    anchor,
   );
   console.log("  ✓ vite.config.ts 写入别名");
 } else {
@@ -113,4 +113,4 @@ if (!vite.includes("hg-bridge")) {
 
 if (vite !== viteOriginal) writeFileSync(vitePath, vite);
 
-console.log(`\n✓ 完成。下一步：\n  pnpm install && pnpm build\n  cp -r dist/. ${join(target, "..", "HGhubHarmony", "entry/src/main/resources/rawfile/www")}/\n  （或直接跑 scripts/sync-web.sh）\n`);
+console.log(`\n✓ 完成。下一步：\n  pnpm install && pnpm build\n  harmony/scripts/build-web.sh   # 构建并同步进 rawfile/www\n`);
