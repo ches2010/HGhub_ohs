@@ -71,6 +71,7 @@ echo "hvigorw: $HVIGORW"
 echo "node:    $(node -v)"
 echo "SDK:     ${DEVECO_SDK_HOME:-未设置（若报 SDK 错误：export DEVECO_SDK_HOME=<cli>/sdk）}"
 echo "工程:    $HARMONY_DIR"
+echo "签名:    signingConfigs 为空时 assembleHap 产出 unsigned HAP（hdc install 会拒绝）；真机安装请用 DevEco 自动签名或配置 signingConfigs"
 echo
 
 cd "$HARMONY_DIR"
