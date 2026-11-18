@@ -629,6 +629,23 @@ export async function invoke<T = Json>(cmd: string, args: Record<string, Json> =
       return { ok: true } as T;
     case "api_me":
       return (await edge("GET", "/api/account/me")) as T;
+    case "api_account_history":
+      return (await edge(
+        "GET",
+        `/api/users/me/history?page=${a.page ?? 1}&size=${a.size ?? 50}`,
+      )) as T;
+    case "api_account_history_record":
+      return (await edge(
+        "POST",
+        "/api/users/me/history",
+        { video_id: a.videoId, ep: a.ep },
+      )) as T;
+    case "api_account_history_delete":
+      return (await edge(
+        "POST",
+        "/api/users/me/history/delete",
+        { ids: a.ids },
+      )) as T;
 
     /* —— 列表 —— */
     case "api_feed":
@@ -642,7 +659,10 @@ export async function invoke<T = Json>(cmd: string, args: Record<string, Json> =
     case "api_topics":
       return (await edge("GET", "/api/topics?size=100")) as T;
     case "api_topic":
-      return (await edge("GET", `/api/topics/${enc(a.slug)}`)) as T;
+      return (await edge(
+        "GET",
+        `/api/topics/${enc(a.slug)}?page=${a.page ?? 1}&size=${a.size ?? 20}`,
+      )) as T;
     case "api_tags":
       return (await edge("GET", "/api/tags")) as T;
     case "api_tag_videos":
@@ -692,6 +712,11 @@ export async function invoke<T = Json>(cmd: string, args: Record<string, Json> =
       return (await edge(
         "GET",
         `/api/posts/category/${enc(a.route)}?page=${a.page ?? 1}&size=${a.size ?? 20}${sortSuffix(a.sort)}`,
+      )) as T;
+    case "api_post_tag":
+      return (await edge(
+        "GET",
+        `/api/posts/tag/${enc(a.tag)}?page=${a.page ?? 1}&size=${a.size ?? 20}`,
       )) as T;
 
     /* —— 详情 / 播放 —— */

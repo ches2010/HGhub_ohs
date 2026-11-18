@@ -14,10 +14,17 @@ export function installFixture({ theme, titles }) {
   let nextCallback = 0, backChannel;
   window.__IOS_UI_FIXTURE__ = {
     hardwareBack() {
-      if (!backChannel) throw new Error("Android back listener was not registered");
+      if (backChannel === undefined) throw new Error("Android back listener was not registered");
+      // Tauri v2 官方协议：handler 是 transformCallback 返回的回调 id，回调本体存在 callbacks 里
+      if (typeof backChannel === "number") {
+        const cb = callbacks.get(backChannel);
+        if (typeof cb !== "function") throw new Error(`callback #${backChannel} was not registered`);
+        cb({});
+        return;
+      }
       backChannel.onmessage({});
     },
-    hasHardwareBack() { return !!backChannel; },
+    hasHardwareBack() { return backChannel !== undefined; },
   };
   window.__TAURI_INTERNALS__ = {
     metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
