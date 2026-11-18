@@ -17,7 +17,17 @@ export function installTvFixture({ accepted = false, legacy, contentPreferences,
     detailDelay, failDetailIds, detailActive: 0, detailMax: 0, heldDetailIds, detailReleases: [],
     releaseDetails() { const releases = fixture.detailReleases.splice(0); releases.forEach(release => release()); },
     nativeListeners: 0, exits: 0, catalogMode: "normal", holdCatalog: false, releaseCatalog: null, failPostIds: [], backChannel: null,
-    back() { if (!fixture.backChannel) throw new Error("Missing native back listener"); fixture.backChannel.onmessage({}); } };
+    back() {
+      if (!fixture.backChannel) throw new Error("Missing native back listener");
+      // Tauri v2 官方协议：handler 是 transformCallback 返回的回调 id，回调本体存在 callbacks 里
+      if (typeof fixture.backChannel === "number") {
+        const cb = callbacks.get(fixture.backChannel);
+        if (typeof cb !== "function") throw new Error(`callback #${fixture.backChannel} was not registered`);
+        cb({});
+        return;
+      }
+      fixture.backChannel.onmessage({});
+    } };
   Object.defineProperty(window, "__tvFixture", { value: fixture });
   let startup;
   Object.defineProperty(window, "__HG_STARTUP__", { configurable: true, get: () => startup, set(value) {
