@@ -69,6 +69,6 @@ GUI 的 Build 菜单本就等价。
 > `hvigor-wrapper.js` / 全局 hvigorw 首次运行会从 `https://ohpm.openharmony.cn/ohpm/` 取 `@ohos/hvigor`，
 > 所以构建机需要能访问 ohpm 源（不能访问 GitHub 不影响）。
 
-## 许可## 许可
+## 许可
 
 沿用上游 PolyForm Noncommercial 1.0.0：仅限个人学习、自用与非营利使用，禁止商业分发。
