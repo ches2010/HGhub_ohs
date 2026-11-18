@@ -1,0 +1,90 @@
+name: Harmony web bundle
+
+# 构建鸿蒙内嵌前端并回写仓库（README「在 Actions 里跑 Harmony web bundle」即此 workflow）：
+#   1) pnpm install + vite build（标准版 + TV 版，与 ci.yml 的 Frontend build 一致）
+#   2) dist → harmony/entry/src/main/resources/rawfile/www/
+#   3) 重新打包根目录 HGhub_ohs_harmony.zip（README.md + harmony/**，排除构建产物）
+#   4) 按 inputs.commit_back 决定是否提交回目标分支
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "要回写的目标分支"
+        type: string
+        default: "sync/upstream-v2.2.0"
+      commit_back:
+        description: "是否把 www/zip 提交回分支"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: harmony-web-bundle-${{ inputs.branch }}
+  cancel-in-progress: false
+
+jobs:
+  bundle:
+    name: Build web & repack harmony bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      TARGET_BRANCH: ${{ inputs.branch }}
+      COMMIT_BACK: ${{ inputs.commit_back }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 1
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build frontend (standard & TV)
+        run: |
+          VITE_APP_EDITION=tv pnpm build
+          pnpm build
+      - name: Sync dist into rawfile/www
+        run: |
+          DEST="harmony/entry/src/main/resources/rawfile/www"
+          rm -rf "$DEST"
+          mkdir -p "$DEST"
+          cp -r dist/. "$DEST/"
+          echo "== rawfile/www =="
+          find "$DEST" -type f -exec ls -l {} \;
+      - name: Repack HGhub_ohs_harmony.zip
+        run: |
+          zip -q -r HGhub_ohs_harmony.zip README.md harmony \
+            -x "harmony/build/*" "harmony/.hvigor/*" "harmony/oh_modules/*" \
+               "harmony/entry/build/*" "harmony/entry/oh_modules/*" \
+               "harmony/entry/.preview/*" "harmony/local.properties" \
+               "*.hap" "*.hsp" "*.har"
+          echo "== zip entries =="
+          unzip -l HGhub_ohs_harmony.zip | tail -3
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: harmony-web-bundle
+          path: |
+            harmony/entry/src/main/resources/rawfile/www
+            HGhub_ohs_harmony.zip
+          retention-days: 7
+          if-no-files-found: error
+      - name: Commit back to target branch
+        if: ${{ inputs.commit_back }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add harmony/entry/src/main/resources/rawfile/www HGhub_ohs_harmony.zip
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Harmony web bundle: rebuild www & repack zip for v2.2.0"
+            git push origin "HEAD:$TARGET_BRANCH"
+          fi
