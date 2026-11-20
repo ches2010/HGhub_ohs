@@ -6,8 +6,8 @@ import { Button } from "./ios/controls";
 import { Modal, Sheet } from "./ui";
 import "../../styles/content-preferences.css";
 
-export function TagBlockMenu({ open, tags, onClose, onSettings }: {
-  open: boolean; tags: readonly string[]; onClose: () => void; onSettings?: () => void;
+export function TagBlockMenu({ open, tags, initialSelected, onClose, onSettings }: {
+  open: boolean; tags: readonly string[]; initialSelected?: readonly string[]; onClose: () => void; onSettings?: () => void;
 }) {
   const { preferences, revision, storageError, blockTags, isTagBlocked } = useContentPreferences();
   const [submittedAt, setSubmittedAt] = useState<number | null>(null);
@@ -19,7 +19,13 @@ export function TagBlockMenu({ open, tags, onClose, onSettings }: {
   const options = names.filter((tag, index) => tag
     && names.findIndex(value => normalizeTag(value) === normalizeTag(tag)) === index);
   const identity = options.join("\u0000");
-  useEffect(() => { setSelected([]); setSubmittedAt(null); setExpanded(false); }, [open, identity]);
+  const initialKey = (initialSelected ?? []).map(normalizeTag).join("\u0000");
+  useEffect(() => {
+    const requested = new Set((initialSelected ?? []).map(normalizeTag));
+    setSelected(open ? options.filter(tag => requested.has(normalizeTag(tag)) && !isTagBlocked(tag)) : []);
+    setSubmittedAt(null);
+    setExpanded(false);
+  }, [open, identity, initialKey]);
   useEffect(() => {
     if (submittedAt === null || revision <= submittedAt) return;
     setSubmittedAt(null);

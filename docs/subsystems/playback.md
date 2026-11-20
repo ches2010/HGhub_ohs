@@ -75,12 +75,22 @@
 - 页面恢复：只有 `wanted=true` 才恢复；原生控件造成的暂停也要被记住，不能凭
   “之前自动播放过”强行继续。
 - seek：preview → commit → `seeking` → `seeked`/`playing`；拖动取消、
-  页面失活或换源不会提交旧目标。
+  页面失活或换源不会提交旧目标。移动端画面横拖（`scrub`）与底栏直拖（`barPct`）统一在底部进度条上
+  加粗高亮预览并展示「目标时间 / 总时长」胶囊，不在屏幕中央叠加进度条；全屏闲置隐藏期间横拖画面会
+  在底部自动唤起进度条。
+- 移动端首页普通视频播放的底部「选集」「静音」「上下划切集」「全屏」使用低不透明度底色与轻微背景模糊，
+  以减少对画面的遮盖；文字和图标保持原有颜色与可点击范围。此样式不应用到清屏、全屏控制条或其他页面。
 - 控件闲置隐藏（`src/features/feed/fsIdle.ts`）：桌面 2.8s（键盘聚焦控件时不隐藏）；
   移动沉浸全屏按设置 `fsIdleSecs`（`hghubx_app_v1` 内，0/3/5/10 秒，默认 3，0=不自动隐藏），
   单击画面切换显隐、双击仍是暂停/播放；暂停时不隐藏。桌面与内嵌全屏统一经
   `src/shared/lib/fullscreen.ts` 兼容标准与 `webkit` 前缀 Fullscreen API，不支持或被拒绝时
-  回退至应用内全屏并同步 Tauri 窗口全屏；移动端 Feed 底部信息容器保持 `pointer-events: none`
+  回退至应用内全屏并同步 Tauri 窗口全屏。桌面闲置隐藏（`.player-root.is-idle`）同时淡出
+  控制条、社交栏、左下信息、上下切换按钮与上下文页左上角标题栏（`.desktop-context-header`），
+  并把媒体容器内的鼠标指针设为 `cursor: none`，移动鼠标由 `wake()` 恢复；锁定
+  （`.player-root.is-locked`）同样隐藏左上角标题栏的按钮与文字。桌面原生/回退全屏由
+  `useFeedViewport` 的 `fullscreen` 跟踪（不经过 `store.fs`）：进入全屏前先按当前条目重锚
+  `scrollTop` 并清掉待定滚动切换，全屏期间 `onScroll` 与重锚 effect 都跳过，避免容器高度
+  变化后按旧像素偏移切到别的剧（issue #180）。移动端 Feed 底部信息容器保持 `pointer-events: none`
   （仅对详情按钮与进度条显式开启命中），避免跨宽布局盒遮挡右侧操作栏（如「全屏」）与画面手势。CSS 旋转舞台（`.fs-landscape`）上
   的分区判定/横拖定位/上下划切集/长按换挡都先经 `getHoldPoint` 把屏幕坐标换算回
   播放器坐标（rotate(90deg)：播放器 x=屏幕 dy、y=屏幕 -dx），长按锁定的命中检测则用
@@ -119,3 +129,6 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 `pnpm test:playback` 使用本地 HLS fixture，需要 FFmpeg 和 Chromium；它不能替代
 iOS WKWebView、Android WebView、Linux GStreamer 的实机矩阵。`test:ios-native-media`
 检查前端传输契约，不证明真机 AVFoundation 已通过。上述命令是验证入口，不代表本轮已经运行。
+`tv` 场景入口是 `scripts/test-tv-remote.mjs`（mock Tauri IPC、真实 TV bootstrap）。视口 resize 后
+必须等焦点提交并断言 `activeElement` 命中目标控件（未命中重试一次），再读焦点派生样式；
+不得在与 resize 同一次 evaluate 里同步断言 `:focus` 样式。

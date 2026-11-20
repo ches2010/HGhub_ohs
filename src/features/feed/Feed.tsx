@@ -11,8 +11,8 @@ import { PlaybackLock, VideoSurface, createPlaybackClock, type VideoHandle } fro
 import { tracePlayback } from "../../shared/diagnostics/playbackDiagnostics";
 import { useContentPreferences } from "../../shared/model/contentPreferences";
 import { TagBlockMenu } from "../../shared/ui/TagBlockMenu";
-import { PreferenceStorageNotice } from "../../shared/ui/PreferenceStorageNotice";
 import { InplaceSearch } from "../search/InplaceSearch";
+import { PreferenceStorageNotice } from "../../shared/ui/PreferenceStorageNotice";
 import MobileHoldGuide from "./MobileHoldGuide";
 import { useFsIdle } from "./fsIdle";
 import { useMobileHoldGuide } from "./useMobileHoldGuide";
@@ -55,6 +55,8 @@ export default function Feed({
   const { preferences, revision, blockReason } = contentPreferences;
   const filtering = !preferences.paused && (preferences.blockedTags.length > 0 || preferences.hideUntagged);
   const [tagMenu, setTagMenu] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [tagSelection, setTagSelection] = useState<string[]>([]);
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [tagErrors, setTagErrors] = useState<Record<string, string>>({});
   const [originEpoch, setOriginEpoch] = useState(0);
@@ -95,7 +97,6 @@ export default function Feed({
   const [vsize, setVsize] = useState({ key: "", w: 0, h: 0 });
   const [paused, setPaused] = useState(false);
   const [controlsLocked, setControlsLocked] = useState(false);
-  const [searching, setSearching] = useState(false);
   const [rate, setRate] = useState(1);
   const [waiting, setWaiting] = useState(false);
   const [err, setErr] = useState("");
@@ -156,10 +157,24 @@ export default function Feed({
   const allowed = !filtering || (tagsReady && !blocked);
   const closePanels = () => { setPanel(null); setTagMenu(false); };
   const openPreferences = () => { closePanels(); store.push({ kind: "settings", section: "内容偏好" }); };
-  const openTagMenu = () => { setPanel(null); setTagMenu(true); };
+  const openTagMenu = (selected: string[] = []) => { setTagSelection(selected); setPanel(null); setTagMenu(true); };
   const openTag = (tag: string) => { closePanels(); store.push({ kind: "tag", tag, name: tag }); };
+  const lockControls = () => {
+    setPanel(null);
+    setControlsLocked(true);
+    toast("已锁定屏幕", "info", "screen-lock");
+  };
+  const togglePlayback = useCallback(() => {
+    videoRef.current?.toggle();
+  }, []);
 
-  useEffect(() => { setTagMenu(false); }, [curId, store.lineEpoch, accountScope]);
+  const toggleSwipeEp = () => {
+    const next = !swipeEp;
+    setSwipeEp(next);
+    toast(next ? "上下划切集已开启" : "上下划切集已关闭", "info", "swipe-toggle");
+  };
+
+  useEffect(() => { setTagMenu(false); setTagSelection([]); }, [curId, store.lineEpoch, accountScope]);
   useEffect(() => { if (!active) setSearching(false); }, [active]);
   useEffect(() => {
     store.setLocked(active && controlsLocked);
@@ -311,9 +326,9 @@ export default function Feed({
     boxRef, videoRef, pinchRef, playbackClock, isDesktop, active, controlsLocked, showHoldGuide,
     rotated, fs, clean, setClean, idle, setIdle, arm, wake, swipeEp, kind, curId, epMap, setEpMap,
     episodesLength: episodes.length, effectiveLength: effectiveVideoIds.length, go,
-    duration, playUrl, playKey, openTagMenu, setPanel, setTagMenu, toast,
+    duration, playUrl, playKey, setPanel, setTagMenu, toast,
   });
-  useEffect(() => { setBarScrubbing(barPct !== null); }, [barPct]);
+  useEffect(() => { setBarScrubbing(barPct !== null || scrub !== null); }, [barPct, scrub]);
 
   const {
     liked, collected, likePending, collectPending, followPending, heartBurst,
@@ -326,8 +341,8 @@ export default function Feed({
 
   /* 倍速：中心小方块打开偏好，右上长按 2x 起、左右滑换挡，左下 0.5x。 */
   const effRate = holdSpeed || speedLock || (holdSlow ? 0.5 : rate);
-  /* 竖屏快捷胶囊的显隐：不卸载、只改 opacity，这样淡入淡出都能过渡（#19） */
-  const capsuleOn = !fs && !clean && !isDesktop && (landscapeVideo || zoom.s > 1.05);
+  /* The pinch-zoom reset capsule fades in place without unmounting (issue #19). */
+  const capsuleOn = !fs && !clean && !isDesktop && zoom.s > 1.05;
 
   /* 若用户在视频首帧宽高解析出来前已点进全屏，解析出横屏后自动补发横屏方向请求 */
   useEffect(() => {
@@ -537,7 +552,6 @@ export default function Feed({
     return registerOverlayBack(() => { setPanel(null); return true; });
   }, [active, panel]);
 
-  const lockControls = () => { setPanel(null); setControlsLocked(true); };
   const pickEp = (ep: number) => {
     setEpMap((m) => ({ ...m, [curId]: ep }));
     setPanel(null);
@@ -606,11 +620,13 @@ export default function Feed({
             }
             return (
               <section key={vid} className={sectionClass} inert={!isActive || undefined} aria-hidden={!isActive || undefined}>
-                {isActive && playUrl ? (
+                {isActive ? (
                   <div ref={holdTargetRef} data-mobile-hold-target={!isDesktop || undefined}
                     className="absolute inset-0" style={{ touchAction: fs || swipeEp ? "none" : "pan-y" }}
                     onPointerDown={onDown} onPointerMove={onMove} onPointerUp={(e) => onUp(false, e)} onPointerCancel={(e) => onUp(true, e)} onLostPointerCapture={(e) => onUp(true, e)}>
-                    {/* 老 WebView 不认识 inset 简写；四边写法保证缩放舞台铺满（#138）。 */}
+                    {playUrl ? (
+                      <>
+                        {/* 老 WebView 不认识 inset 简写；四边写法保证缩放舞台铺满（#138）。 */}
                     <div style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, transform: isDesktop ? undefined : `translate3d(${zoom.x}px, ${zoom.y}px, 0) scale(${zoom.s})`, transformOrigin: "center center", transition: isDesktop || zoom.g ? "none" : "transform .18s ease-out" }}>
                       <VideoSurface ref={videoRef} src={playUrl} poster={posterUrl} autoPlay active={active && !tagMenu && !showHoldGuide && !searching} muted={muted}
                         diagnosticContext={{ active: active && !tagMenu && !showHoldGuide && !searching, view: mode, kind, video_id: curId, episode: curEp }}
@@ -637,7 +653,15 @@ export default function Feed({
                             toast("高清播不了，已切回标准", "info");
                           }
                         }} />
-                    </div>
+                      </div>
+                      </>
+                    ) : (
+                      <div className="absolute inset-0">
+                        {(!filtering || checked[`${accountScope}:${store.lineEpoch}:${kind}:${vid}`]) &&
+                          <Img src={details[vid]?.cover || posts[vid]?.cover || ""} eager />}
+                        <div className="absolute inset-0" style={{ background: "rgba(0,0,0,.25)" }} />
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="absolute inset-0">
@@ -648,17 +672,19 @@ export default function Feed({
                 )}
 
                 <FeedItemChrome
-                  isActive={isActive} isDesktop={isDesktop} fs={fs} clean={clean} mode={mode} kind={kind}
+                  isActive={isActive} isDesktop={isDesktop} fs={fs} clean={clean} rotated={rotated} mode={mode} kind={kind}
                   title={title} index={index} effectiveLength={effectiveVideoIds.length} bottomInset={bottomInset}
                   curEp={curEp} duration={duration} meta={meta} post={post} hevcUrl={hevcUrl}
-                  preferHevc={preferHevc} setPreferHevc={setPreferHevc} swipeEp={swipeEp} setSwipeEp={setSwipeEp}
+                  preferHevc={preferHevc} setPreferHevc={setPreferHevc}
                   landscapeVideo={landscapeVideo} capsuleOn={capsuleOn} zoom={zoom} setZoom={setZoom}
-                  portraitFit={portraitFit} setPortraitFit={setPortraitFit}
                   liked={liked} collected={collected} likePending={likePending} collectPending={collectPending}
                   heartBurst={heartBurst} likeCount={likeCount} collectCount={collectCount}
-                  paused={paused} waiting={waiting} err={err} scrub={scrub} barRef={barRef} barPct={barPct}
+                  paused={paused} onTogglePlay={togglePlayback} waiting={waiting} err={err} scrub={scrub} barRef={barRef} barPct={barPct}
                   playbackClock={playbackClock} onBack={onBack} enterFs={enterFs} stepDir={stepDir} canStep={canStep}
-                  onLike={onLike} onFav={onFav} setPanel={setPanel}
+                  onLike={onLike} onFav={onFav} setPanel={setPanel} openTag={openTag} openTagMenu={openTagMenu}
+                  muted={muted} onToggleMuted={() => setMuted(value => !value)}
+                  swipeEnabled={kind === "video" && episodes.length > 1} swipeEp={swipeEp} onToggleSwipe={toggleSwipeEp}
+                  onLock={lockControls}
                   onBarDown={onBarDown} onBarMove={onBarMove} onBarUp={onBarUp}
                   onRetryStream={() => {
                     setErr(""); setWaiting(true);
@@ -674,35 +700,43 @@ export default function Feed({
 
         <FeedPlayerShellChrome
           videoRef={videoRef} speedLockTargetRef={speedLockTargetRef} barRef={barRef} playbackClock={playbackClock}
-          isDesktop={isDesktop} active={active} fs={fs} idle={idle} rotated={rotated}
+          isDesktop={isDesktop} active={active} fs={fs} idle={idle} rotated={rotated} vpLandscape={vpLandscape}
           theater={theater} setTheater={setTheater} fullscreen={fullscreen} controlsLocked={controlsLocked}
           paused={paused} duration={duration} rate={rate} setRate={setRate} effRate={effRate}
           holdSpeed={holdSpeed} holdSlow={holdSlow} speedLock={speedLock} setSpeedLock={setSpeedLock} lockArmed={lockArmed}
           muted={muted} setMuted={setMuted} volume={volume} setVolume={setVolume} swipeEp={swipeEp} setSwipeEp={setSwipeEp}
+          preferHevc={preferHevc} setPreferHevc={setPreferHevc} portraitFit={portraitFit} setPortraitFit={setPortraitFit}
           playKey={playKey} curId={curId} curEp={curEp} index={index} effectiveLength={effectiveVideoIds.length}
           kind={kind} meta={meta} likeCount={likeCount} collectCount={collectCount}
           episodes={episodes} related={related} follows={store.follows} followPending={followPending}
           post={post} articleHtml={articleHtml} panel={panel} setPanel={setPanel}
-          barPct={barPct} onBarDown={onBarDown} onBarMove={onBarMove} onBarUp={onBarUp}
+          scrub={scrub} barPct={barPct} onBarDown={onBarDown} onBarMove={onBarMove} onBarUp={onBarUp}
           pickEp={pickEp} go={go} togglePip={togglePip} lockControls={lockControls} toggleFull={toggleFull} exitFs={exitFs}
           onFollow={onFollow} openTag={openTag} openTagMenu={openTagMenu} closePanels={closePanels} pushPage={store.push} toast={toast}
         />
       </div>
 
       <FeedMobileTopTools
-        isDesktop={isDesktop} controlsLocked={controlsLocked} active={active} fs={fs} idle={idle}
-        rotated={rotated} clean={clean} muted={muted} setMuted={setMuted}
-        lockControls={lockControls}
-        onSearchTab={() => { if (mode === "context") setSearching(true); else store.setTab("search"); }}
+        isDesktop={isDesktop} controlsLocked={controlsLocked} active={active && !searching} fs={fs} idle={idle}
+        rotated={rotated} clean={clean} currentQuality={playUrl ? (preferHevc && hevcUrl && playUrl === hevcUrl ? "HD" : "SD") : null}
+        searchLabel={kind === "post" ? "搜吃瓜帖" : "搜短剧"}
+        onSearch={mode === "context" ? () => { closePanels(); setSearching(true); } : undefined}
       />
-      {searching && active && (
+      {searching && mode === "context" && active && (
         <InplaceSearch kind={kind} wide={isDesktop} onClose={() => setSearching(false)}
           onOpenVideo={(v, list, kw) => store.push({ kind: "feed", videoIds: list.map(x => x.id), index: list.findIndex(x => x.id === v.id), title: kw ? `搜索 · ${kw}` : "搜索" })}
           onOpenPost={(p) => store.push({ kind: "post", id: p.id })} />
       )}
-      <TagBlockMenu open={active && tagMenu} tags={meta.tags} onClose={() => setTagMenu(false)} onSettings={openPreferences} />
+      <TagBlockMenu open={active && tagMenu} tags={meta.tags} initialSelected={tagSelection} onClose={() => setTagMenu(false)} onSettings={openPreferences} />
       {!isDesktop && <MobileHoldGuide open={showHoldGuide} onClose={holdGuide.dismiss} target={holdTargetRef} bottomInset={bottomInset} />}
-      {controlsLocked && <PlaybackLock active={active} rotated={rotated} immersive={!isDesktop && fs && !rotated} onUnlock={() => { setControlsLocked(false); wake(); }} />}
+      {controlsLocked && <PlaybackLock active={active} rotated={rotated} immersive={!isDesktop && fs && !rotated}
+        onBlocked={() => toast("轻触即可解锁", "info", "screen-lock")}
+        onUnlock={() => {
+          setControlsLocked(false);
+          setClean(false);
+          wake();
+          toast("已解锁", "info", "screen-lock");
+        }} />}
     </div>
   );
 }

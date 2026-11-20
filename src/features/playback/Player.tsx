@@ -1,6 +1,6 @@
 import { Button, Input } from "../../shared/ui/ios/controls";
 import { Loader } from "../../shared/ui/ios/effects";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { fmtTime } from "../../shared/api/api";
 import { useSeekInput } from "./useSeekInput";
@@ -44,6 +44,23 @@ export default function Player({
   });
   const [playing, setPlaying] = useState(false);
   const [waiting, setWaiting] = useState(false);
+  /* 短暂 HLS 缓冲（waiting→playing 几百毫秒内结束）不闪整屏转圈（issue #165）：
+     媒体事件进入 waiting 延迟 300ms 再显示；seek/重试是用户动作，立即显示；
+     退出 waiting 立即取消。 */
+  const [showWaiting, setShowWaiting] = useState(false);
+  const waitingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearWaitingTimer = () => { if (waitingTimer.current) { clearTimeout(waitingTimer.current); waitingTimer.current = null; } };
+  const enterWaiting = (delayed: boolean) => {
+    clearWaitingTimer();
+    if (delayed) {
+      waitingTimer.current = setTimeout(() => { waitingTimer.current = null; setShowWaiting(true); }, 300);
+    } else {
+      setShowWaiting(true);
+    }
+    setWaiting(true);
+  };
+  const leaveWaiting = () => { clearWaitingTimer(); setShowWaiting(false); setWaiting(false); };
+  useEffect(() => clearWaitingTimer, []);
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [rate, setRate] = useState(1);
@@ -60,7 +77,7 @@ export default function Player({
       if (!handle || !video || !handle.isActive()) return;
       const dur = video.duration && Number.isFinite(video.duration) ? video.duration : 0;
       const target = dur > 0 ? Math.max(0, Math.min(dur - 0.15, rawTarget)) : Math.max(0, rawTarget);
-      if (Math.abs(video.currentTime - target) > 0.01) setWaiting(true);
+      if (Math.abs(video.currentTime - target) > 0.01) enterWaiting(false);
       handle.seek(target, `legacy_${input}`);
       setTime(video.currentTime);
     },
@@ -71,7 +88,7 @@ export default function Player({
   const retry = () => {
     if (!surfaceRef.current?.isActive()) return;
     setErrMsg("");
-    setWaiting(true);
+    enterWaiting(false);
     setPlaying(false);
     surfaceRef.current.retry();
   };
@@ -87,7 +104,7 @@ export default function Player({
   return (
     <div ref={slotRef} className={`post-player-slot ${className}`}>
       {createPortal(<div ref={wrapRef} className="post-player relative bg-black overflow-hidden"
-        data-playing={playing} data-fullscreen={full} data-fullscreen-fallback={fallback}>
+        data-playing={playing} data-fullscreen={full} data-fullscreen-fallback={fallback} data-scrubbing={seek.scrubbing || undefined}>
         <div className="absolute inset-0" inert={controlsLocked}>
           <VideoSurface
             ref={surfaceRef}
@@ -106,13 +123,13 @@ export default function Player({
             onTime={setTime}
             onDuration={setDuration}
             onPlay={() => { setPlaying(true); onTogglePlay?.(true); }}
-            onPlaying={() => { setPlaying(true); setWaiting(false); setErrMsg(""); onPlaying?.(); }}
+            onPlaying={() => { setPlaying(true); leaveWaiting(); setErrMsg(""); onPlaying?.(); }}
             onPause={() => { setPlaying(false); onTogglePlay?.(false); }}
-            onWaiting={() => setWaiting(true)}
-            onSeeked={() => setWaiting(false)}
+            onWaiting={() => enterWaiting(true)}
+            onSeeked={() => leaveWaiting()}
             onEnded={onEnded}
-            onClearError={() => { setErrMsg(""); setWaiting(false); }}
-            onError={(m) => { setErrMsg(m); setWaiting(false); setPlaying(false); }}
+            onClearError={() => { setErrMsg(""); leaveWaiting(); }}
+            onError={(m) => { setErrMsg(m); leaveWaiting(); setPlaying(false); }}
           />
 
           {errMsg && (
@@ -122,7 +139,7 @@ export default function Player({
             </div>
           )}
 
-          {waiting && !errMsg && (
+          {showWaiting && !errMsg && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <Loader className="w-9 h-9 spinner" />
             </div>
@@ -140,8 +157,15 @@ export default function Player({
           {controls && (
             <div className="player-inline-controls" role="group" aria-label="播放控制">
               <div className="post-player-seek-row">
-                <Input aria-label="播放进度" type="range" {...seek.inputProps}
-                  className="hg-range" style={{ ...seek.inputProps.style, "--fill": `${pct}%` } as React.CSSProperties} />
+                <div className="post-player-seek-wrap">
+                  {seek.scrubbing && (
+                    <span className="post-player-seek-pill" style={{ left: `${Math.max(10, Math.min(90, pct))}%` }}>
+                      <strong>{fmtTime(seek.time)}</strong><span> / {fmtTime(duration)}</span>
+                    </span>
+                  )}
+                  <Input aria-label="播放进度" type="range" {...seek.inputProps}
+                    className="hg-range" style={{ ...seek.inputProps.style, "--fill": `${pct}%` } as React.CSSProperties} />
+                </div>
                 <span className="post-player-time">{fmtTime(seek.time)} / {fmtTime(duration)}</span>
               </div>
               <div className="post-player-actions">

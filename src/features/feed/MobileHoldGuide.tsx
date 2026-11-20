@@ -89,7 +89,7 @@ function GuideContent({ target, bottomInset, onClose }: Omit<Props, "open">) {
           width={bounds.size} height={bounds.size} fill="rgb(15 19 30 / .42)" stroke="white" strokeWidth="2" />
       </svg>
       <div className="mobile-hold-guide-heading">
-        <h2>长按，按你的位置操作</h2>
+        <h2>长按左右区域调整速度</h2>
         <p>按住约 0.4 秒，松开恢复原速度</p>
       </div>
       <div className="mobile-hold-guide-zone is-fast" style={point(.76, compact ? .34 : .28)}>
@@ -98,13 +98,9 @@ function GuideContent({ target, bottomInset, onClose }: Omit<Props, "open">) {
       <div className="mobile-hold-guide-zone is-slow" style={point(.24, compact ? .66 : .65)}>
         <strong>0.5×</strong><span>左下 · 按住减速</span>
       </div>
-      <div className="mobile-hold-guide-zone is-menu" data-hold-guide-menu style={{ ...point(.5, .5), width: bounds.size, height: bounds.size }}>
-        <span className="mobile-hold-guide-dot" aria-hidden="true" />
-        <strong>不感兴趣</strong><span>只在此处长按</span>
-      </div>
     </>}
     <div className="mobile-hold-guide-footer">
-      <p>长按加速 · 左右滑换挡 · 移入顶部标签锁定</p>
+      <p>长按左右区域加速 / 减速 · 左右滑换挡</p>
       <p>双击暂停播放</p>
       <Button className="mobile-hold-guide-done" onClick={onClose} data-autofocus>知道了</Button>
     </div>
