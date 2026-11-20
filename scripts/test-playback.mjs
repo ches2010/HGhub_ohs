@@ -14,8 +14,9 @@ import { createServer as createViteServer } from "vite";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const scriptScenarios = {
   tv: { script: "test-tv-remote.mjs", timeout: 480000, metrics: { transport: "mock Tauri IPC; actual TV bootstrap, worker, library and player" } },
+  "post-flicker": { script: "test-post-flicker.mjs", timeout: 240000, metrics: { transport: "mock Tauri IPC; real PostDetail/AppProvider/Player; local HLS fixture" } },
 };
-const ALL_SCENARIOS = ["seek", "legacy", "lifecycle", "gesture", "proxy", "portrait-fit", "ios-native", "recovery", "review", "tv"];
+const ALL_SCENARIOS = ["seek", "legacy", "lifecycle", "gesture", "proxy", "portrait-fit", "ios-native", "recovery", "review", "tv", "post-flicker"];
 const { values: args } = parseArgs({ options: {
   "media-dir": { type: "string" }, output: { type: "string" }, "browser-executable": { type: "string" },
   scenarios: { type: "string", default: "seek,legacy,lifecycle,gesture,proxy,portrait-fit" }, help: { type: "boolean" },
@@ -152,7 +153,12 @@ async function speedMenuKeyboardChecks(page, paused) {
   await assertSelection(1);
 }
 async function gestureChecks(page) {
-  await page.goto(`${report.ui}/tests/player-seek.html?diagnostics=1&proxy=${encodeURIComponent(report.media)}`);
+  await page.addInitScript(() => {
+    const { promise, resolve } = Promise.withResolvers();
+    window.__playGate = promise;
+    window.__releasePlay = resolve;
+  });
+  await page.goto(`${report.ui}/tests/player-seek.html?diagnostics=1&swipe-ep=1&proxy=${encodeURIComponent(report.media)}`);
   const guide = page.getByRole("dialog", { name: "视频长按操作提示", exact: true });
   await guide.waitFor({ state: "visible" });
   await page.waitForFunction(() => document.querySelector("video")?.paused);
@@ -168,6 +174,14 @@ async function gestureChecks(page) {
     }));
   });
   const clean = () => page.locator('.player-root').getAttribute('data-clean');
+  // Regression: after a double-tap pause, a single click on the center play icon resumes playback.
+  await tap(); await tap();
+  await page.waitForFunction(() => document.querySelector("video").paused);
+  const centerPlay = page.getByRole("button", { name: "播放", exact: true });
+  await centerPlay.waitFor();
+  await centerPlay.click();
+  await page.waitForFunction(() => !document.querySelector("video").paused);
+  assert.equal(await clean(), 'false', 'Center play icon must resume playback without another double tap');
   const start = Date.now();
   await tap();
   await page.waitForFunction(() => document.querySelector('.player-root')?.dataset.clean === 'true');
@@ -181,7 +195,52 @@ async function gestureChecks(page) {
   await tap(); await tap();
   await page.waitForFunction(paused => document.querySelector('video').paused !== paused, wasPaused);
   assert.equal(await clean(), 'false', 'Double tap restores chrome and toggles playback once');
-  return {singleTapMs};
+  await page.evaluate(() => {
+    const surface = document.querySelector('video').parentElement.parentElement;
+    const bounds = surface.getBoundingClientRect();
+    surface.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 92, pointerType: 'touch', button: 0, clientX: bounds.x + 80, clientY: bounds.y + 220 }));
+    surface.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 92, pointerType: 'touch', button: 0, clientX: bounds.x + 220, clientY: bounds.y + 220 }));
+  });
+  await page.waitForFunction(() => document.querySelector('[data-seek-bar]')?.dataset.scrubbing === 'true');
+  assert.equal(await page.evaluate(() => [...document.querySelectorAll('.player-root *')].some(el => {
+    const r = el.getBoundingClientRect();
+    return r.top > 120 && r.bottom < 380 && el.textContent?.includes('/ 1:30');
+  })), false, 'Horizontal gesture scrub must only highlight the bottom progress bar without a center-screen bar');
+  await page.evaluate(() => {
+    const surface = document.querySelector('video').parentElement.parentElement;
+    const bounds = surface.getBoundingClientRect();
+    surface.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 92, pointerType: 'touch', button: 0, clientX: bounds.x + 220, clientY: bounds.y + 220 }));
+  });
+  await page.waitForFunction(() => !document.querySelector('[data-seek-bar]')?.dataset.scrubbing);
+  // 2.2.0 反馈回归：切集过渡期（下一集地址未解析）手势 overlay 必须常驻。
+  // 修复前第二划落在卸载后的封面/滚动列表上被丢弃或切到别的视频；修复后集数连加且视频不变。
+  await page.evaluate(() => window.playerSeekFixture.setLogging(true));
+  const swipeUp = () => page.evaluate(() => {
+    const surface = document.querySelector('[data-mobile-hold-target]') || document.querySelector('.player-root section');
+    const b = surface.getBoundingClientRect();
+    const x = b.x + b.width / 2, y0 = b.y + b.height * .7, y1 = b.y + b.height * .3;
+    const at = y => ({ bubbles: true, pointerId: 92, pointerType: 'touch', isPrimary: true, button: 0, buttons: 1, clientX: x, clientY: y });
+    surface.dispatchEvent(new PointerEvent('pointerdown', at(y0)));
+    surface.dispatchEvent(new PointerEvent('pointermove', at(y1)));
+    surface.dispatchEvent(new PointerEvent('pointerup', { ...at(y1), buttons: 0 }));
+  });
+  await swipeUp();
+  await page.locator('.mobile-video-episode').filter({ hasText: /^第2集$/ }).first().waitFor();
+  await swipeUp();
+  await page.locator('.mobile-video-episode').filter({ hasText: /^第3集$/ }).first().waitFor();
+  await page.evaluate(() => window.__releasePlay());
+  await page.waitForFunction(() => window.playerSeekFixture.logs.some(e => e.event === 'play.resolve' && e.data.video_id === 991 && e.data.episode === 3));
+  assert.equal(await page.evaluate(() => window.playerSeekFixture.logs.some(e => e.event === 'play.resolve' && e.data.video_id === 992)), false,
+    'Fast episode swipes must stay on the same video');
+  const swipeToggle = page.locator('button.mobile-playback-quick[aria-label*="上下划切集"]').first();
+  for (let i = 0; i < 3; i++) {
+    await swipeToggle.click();
+    await page.waitForTimeout(80);
+  }
+  await page.waitForFunction(() => document.querySelectorAll(".a-toast").length === 1);
+  assert.equal(await page.locator(".a-toast").count(), 1, "Rapid swipe-toggle taps must keep one toast card");
+  assert.match(await page.locator(".a-toast").innerText(), /上下划切集/);
+  return { singleTapMs, bottomOnlyScrub: true, fastSwipeEpisodes: [2, 3], sameVideo: true, swipeToggleToastCards: 1 };
 }
 
 // issue #142 回归：手机竖屏视口 + 真实竖屏源（360x640，高>宽）。
@@ -191,6 +250,12 @@ async function gestureChecks(page) {
 //   修复后：竖屏视频一律 "contain"（保留原始比例）→ 断言通过。
 // 第二段用横屏源验证「铺满/适应」切换链路未被修复破坏（该分支修复前后行为一致）。
 async function portraitFitChecks(page) {
+  // The mobile fullscreen transition asks Tauri to lock the screen orientation.
+  // This scenario runs in Chromium, so provide only that bridge and keep the
+  // rest of the playback stack real.
+  await page.addInitScript(() => {
+    window.__TAURI_INTERNALS__ = { invoke: async () => null };
+  });
   const open = proxy => page.goto(`${report.ui}/tests/player-seek.html?diagnostics=1&portrait-fit=1&proxy=${encodeURIComponent(proxy)}`);
   // onSize 是原生媒体事件里的 React 更新；双 rAF 保证 setVsize 已提交到 DOM（帧同步，非任意 sleep）。
   const afterCommit = () => page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => done(undefined)))));
@@ -222,12 +287,74 @@ async function portraitFitChecks(page) {
   });
   await afterCommit();
   assert.equal(await objectFit(), "contain", "Landscape video in a portrait viewport must default to contain");
+  assert.equal(await page.getByRole("button", { name: "铺满", exact: true }).count(), 0, "Floating fill control must be removed");
+  assert.equal(await page.getByRole("button", { name: "横屏", exact: true }).count(), 0, "Floating rotate control must be removed");
+  await page.getByRole("button", { name: "更多播放设置" }).click();
+  await page.getByRole("dialog", { name: "播放设置" }).waitFor();
   await page.getByRole("button", { name: "铺满", exact: true }).click();
   await page.waitForFunction(() => getComputedStyle(document.querySelector("video")).objectFit === "cover");
   await page.getByRole("button", { name: "适应", exact: true }).click();
   await page.waitForFunction(() => getComputedStyle(document.querySelector("video")).objectFit === "contain");
+  // PR #177 removes the floating fill/rotate controls, so this regression must
+  // enter fullscreen through the persistent bottom-dock control. Close its
+  // settings sheet first so the same case also runs after that PR lands.
+  const settingsDialog = page.getByRole("dialog", { name: "播放设置", exact: true });
+  if (await settingsDialog.count()) {
+    await settingsDialog.getByRole("button", { name: "关闭播放设置", exact: true }).click();
+    await settingsDialog.waitFor({ state: "hidden" });
+  }
+
+  // Rotated landscape fullscreen: the clean-mode lock and the shutdown unlock
+  // must occupy the same stage-local anchor even when the phone has a bottom
+  // safe-area inset. The rotated stage maps --sab to its right edge.
+  await page.locator(".player-root").evaluate(el => {
+    el.style.setProperty("--sab", "34px");
+    el.style.setProperty("--sar", "0px");
+    el.style.setProperty("--sal", "0px");
+    el.style.setProperty("--sat", "44px");
+  });
+  await page.getByRole("button", { name: "全屏", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector(".player-root")?.classList.contains("fs-landscape"));
+  await page.waitForTimeout(250);
+  const qualityBox = await page.locator(".feed-current-quality").boundingBox();
+  assert(qualityBox, "Quality indicator must be visible before clean mode");
+  await page.evaluate(() => {
+    const surface = document.querySelector("[data-mobile-hold-target]");
+    const box = surface.getBoundingClientRect();
+    for (const type of ["pointerdown", "pointerup"]) surface.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, pointerId: 93, pointerType: "touch", button: 0,
+      clientX: box.x + box.width / 2, clientY: box.y + box.height / 2,
+    }));
+  });
+  await page.waitForFunction(() => document.querySelector(".player-root")?.dataset.clean === "true");
+  const cleanLock = page.getByRole("button", { name: "锁定屏幕", exact: true });
+  await cleanLock.waitFor();
+  const cleanBox = await cleanLock.boundingBox();
+  await cleanLock.click();
+  const unlock = page.getByRole("button", { name: "解锁屏幕", exact: true });
+  await unlock.waitFor();
+  await page.getByText("已锁定屏幕", { exact: true }).waitFor();
+  assert.equal(await page.locator(".a-toast").count(), 1, "Locking must show exactly one status toast");
+  // Rapid taps on the shield only refresh the same screen-lock toast; they must not stack cards.
+  for (let i = 0; i < 5; i += 1) await page.mouse.click(40, 120);
+  await page.getByText("轻触即可解锁", { exact: true }).waitFor();
+  assert.equal(await page.locator(".a-toast").count(), 1, "Repeated locked-area taps must keep one toast");
+  const unlockBox = await unlock.boundingBox();
+  assert(cleanBox && unlockBox, "Both the clean lock and unlock controls must be measurable");
+  const anchorDelta = Math.hypot(cleanBox.x - unlockBox.x, cleanBox.y - unlockBox.y);
+  assert(anchorDelta < 1, `Clean lock must keep the unlock anchor in rotated fullscreen (delta ${anchorDelta.toFixed(1)}px)`);
+  const center = box => ({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
+  const cleanCenter = center(cleanBox), qualityCenter = center(qualityBox);
+  // After the 90-degree stage rotation, stage Y is the upright X axis.
+  const qualityAlignDelta = Math.abs(cleanCenter.y - qualityCenter.y);
+  assert(qualityAlignDelta < 1, `Lock and quality indicator must share the upright right edge (delta ${qualityAlignDelta.toFixed(1)}px)`);
+  await unlock.click();
+  await page.getByText("已解锁", { exact: true }).waitFor();
+  await unlock.waitFor({ state: "hidden" });
+  assert.equal(await page.locator(".a-toast").count(), 1, "Unlocking must replace the hint instead of stacking");
+  assert.equal(await page.getByRole("button", { name: "锁定屏幕", exact: true }).count(), 0, "Unlock exits clean mode and hides the lock icon");
   return { viewport: "390x844", portrait_source: "360x640", portrait_object_fit: portrait.objectFit,
-    landscape_default_fit: "contain", landscape_toggle: ["contain", "cover", "contain"] };
+    landscape_default_fit: "contain", landscape_toggle: ["contain", "cover", "contain"], floating_fit_rotate: 0 };
 }
 
 async function seekChecks(page, legacy) {
@@ -549,7 +676,7 @@ async function explicitRecoveryCheck(page) {
 }
 
 try {
-  if (scenarios.some(name => name !== "ios-native" && name !== "tv" && name !== "review")) {
+  if (scenarios.some(name => name !== "ios-native" && name !== "tv" && name !== "review" && name !== "post-flicker")) {
     let mediaDir = args["media-dir"] && resolve(args["media-dir"]);
     if (!mediaDir) {
       temporaryMedia = await mkdtemp(join(tmpdir(), "hghubx-playback-")); mediaDir = temporaryMedia;
@@ -568,16 +695,16 @@ try {
   }
   for (const name of scenarios) {
     const dir = join(output, name); await mkdir(dir);
-    if (name === "tv") {
+    if (scriptScenarios[name]) {
       const result = { name, status: "running", started: new Date().toISOString() }; report.cases.push(result);
       let stdout = "", stderr = "";
       try {
-        const child = await promisify(execFile)(process.execPath, [join(root, "scripts", scriptScenarios.tv.script)], {
-          cwd: root, encoding: "utf8", timeout: scriptScenarios.tv.timeout, maxBuffer: 8 * 1024 * 1024,
+        const child = await promisify(execFile)(process.execPath, [join(root, "scripts", scriptScenarios[name].script)], {
+          cwd: root, encoding: "utf8", timeout: scriptScenarios[name].timeout, maxBuffer: 8 * 1024 * 1024,
           env: { ...process.env, ...(args["browser-executable"] ? { BROWSER_EXECUTABLE: args["browser-executable"] } : {}) },
         });
         stdout = child.stdout; stderr = child.stderr;
-        result.metrics = { exit_code: 0, ...scriptScenarios.tv.metrics };
+        result.metrics = { exit_code: 0, ...scriptScenarios[name].metrics };
         result.status = "passed"; console.log(`PASS ${name}: ${JSON.stringify(result.metrics)}`);
       } catch (error) {
         stdout = error.stdout || ""; stderr = error.stderr || "";

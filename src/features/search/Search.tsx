@@ -10,10 +10,11 @@ import { FilteredContent } from "../../shared/ui/FilteredContent";
 import { Empty } from "../../shared/ui/ui";
 import { useSearchResults } from "./useSearchResults";
 import { SearchTags } from "./SearchTags";
+import { SearchHistory } from "./SearchHistory";
 import { IBack, IChevR, IClose, IFireF, IPlayF, IRefresh, ISearch, ITrophy } from "../../shared/ui/icons";
 
 export default function Search({ active, wide }: { active: boolean; wide: boolean }) {
-  const { push, searchHist, addSearch, clearSearchHist, lineEpoch, accountScope } = useStore();
+  const { push, searchHist, addSearch, removeSearch, clearSearchHist, lineEpoch, accountScope } = useStore();
   const { preferences } = useContentPreferences();
   const filtering = !preferences.paused && (preferences.blockedTags.length > 0 || preferences.hideUntagged);
   const [q, setQ] = useState("");
@@ -229,16 +230,8 @@ export default function Search({ active, wide }: { active: boolean; wide: boolea
               </Surface>
 
             {searchHist.length > 0 && (
-              <Surface role="region" aria-label="搜索历史" className="mt-4 rounded-(--r-md) bg-s2 p-3.5 a-rise">
-                <div className="flex items-center justify-between gap-2">
-                  <h2 className="text-[14px] font-semibold text-on/90">搜索历史</h2>
-                  <Button onClick={clearSearchHist} className="-mr-2 px-2 inline-flex items-center justify-end text-[12px] text-mut pressable">清空</Button>
-                </div>
-                <div className="flex flex-wrap gap-2 mt-3">
-                  {searchHist.map((h) => (
-                    <Button key={h} onClick={() => { setQ(h); submit(h); }} className="ios-filter-pill text-on/90">{h}</Button>
-                  ))}
-                </div>
+              <Surface className="mt-4 rounded-(--r-md) bg-s2 p-3.5 a-rise">
+                <SearchHistory items={searchHist} onPick={(h) => { setQ(h); submit(h); }} onRemove={removeSearch} onClear={clearSearchHist} />
               </Surface>
             )}
 
@@ -350,7 +343,7 @@ export function RankPage({ onBack, wide }: { onBack: () => void; wide: boolean }
     <div className="ios-page absolute inset-0 bg-bg flex flex-col">
       <div className="ios-subpage-header shrink-0 relative overflow-hidden" style={{ paddingTop: "var(--sat, 0px)" }}>
         <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(90% 120% at 100% 0%, var(--p-pc) 0%, transparent 60%)", opacity: 0.32 }} />
-        <div className="relative">
+        <div className="ios-subpage-inner relative">
           <div className="ios-subpage-bar">
             <Button aria-label="返回" onClick={onBack} className="ios-nav-btn"><IBack size={20} /></Button>
             <span className="w-9 h-9 rounded-[12px] bg-pc text-on-pc flex items-center justify-center shrink-0"><ITrophy size={19} /></span>
