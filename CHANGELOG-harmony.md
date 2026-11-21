@@ -23,6 +23,7 @@
   - 频道列表 SSR 同步、滚动自动加载与海报角标（#211）
   - CI / Release workflow 拆分，新增测试预览与自动合并流程（#210 / #212 / #214）
 - 鸿蒙层版本对齐 `2.2.6`；`hg-bridge` 与 loopback 媒体服务无接口变化。
+- 全面屏适配：窗口启用沉浸式全屏布局，状态栏与导航条透明，消除播放页竖屏/横屏上下白边；ArkWeb 继续用 `viewport-fit=cover` 和 safe-area 避让关键控件。
 - 冲突解决：`Profile` 页脚保留鸿蒙身份；`tests/tv-remote-fixture.mjs` 同时保留 Tauri callback id 与上游 update/download fixture 能力。
 
 ---
