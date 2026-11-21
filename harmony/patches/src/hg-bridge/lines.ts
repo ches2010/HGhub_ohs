@@ -35,7 +35,6 @@ export interface FixedLine {
 
 export const FIXED: FixedLine[] = [
   { name: "固定线路 1", url: "https://huangguoai.com" },
-  { name: "固定线路 2", url: "https://huangguoai.ai" },
 ];
 
 /** 与 Rust `net::base()` 之外的最小依赖：只在这里解析主机名 */

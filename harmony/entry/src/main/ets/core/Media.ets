@@ -111,6 +111,9 @@ export function absoluteUrl(pageUrl: string, target: string): string {
   }
   const pathStart = pageUrl.indexOf('/', schemeEnd + 3);
   const origin = pathStart < 0 ? pageUrl : pageUrl.substring(0, pathStart);
+  if (t.startsWith('//')) {
+    return pageUrl.substring(0, schemeEnd + 1) + t;
+  }
   if (t.startsWith('/')) {
     return origin + t;
   }
@@ -160,6 +163,30 @@ function rewriteUriAttributes(line: string, rewrite: (uri: string) => string): s
   return `${tag}:${mapped.join(',')}`;
 }
 
+function removeUriAttributes(line: string): string {
+  const colon = line.indexOf(':');
+  if (colon < 0) return line;
+  const tag = line.substring(0, colon);
+  const rest = line.substring(colon + 1);
+  const parts: string[] = [];
+  let quoted = false;
+  let start = 0;
+  for (let i = 0; i < rest.length; i++) {
+    const ch = rest.charAt(i);
+    if (ch === '"') quoted = !quoted;
+    if (ch === ',' && !quoted) {
+      parts.push(rest.substring(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(rest.substring(start));
+  const kept = parts.filter((attr: string) => {
+    const eq = attr.indexOf('=');
+    return !(eq > 0 && attr.substring(0, eq).trim() === 'URI');
+  });
+  return `${tag}:${kept.join(',')}`;
+}
+
 /**
  * 改写整份播放列表：分片与所有 URI 属性都指向 `${localOrigin}/seg?u=`。
  * 与 Rust 版一致：丢弃 EXT-X-CONTENT-STEERING，DATERANGE 只保留非 URI 属性。
@@ -179,7 +206,7 @@ export function rewritePlaylist(localOrigin: string, pageUrl: string, text: stri
         continue;
       }
       if (line.startsWith('#EXT-X-DATERANGE:')) {
-        out.push(line);
+        out.push(removeUriAttributes(line));
         continue;
       }
       if (line.indexOf('URI="') >= 0) {

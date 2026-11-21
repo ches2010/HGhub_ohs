@@ -69,7 +69,9 @@ export async function httpRequest(
       expectDataType: text ? http.HttpDataType.STRING : http.HttpDataType.ARRAY_BUFFER,
       connectTimeout: 10000,
       readTimeout: timeoutMs,
-      usingCache: false
+      usingCache: false,
+      // The 5 MiB default is too small for some media segments and covers.
+      maxLimit: 67108864
     };
     if (body.length > 0 && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
       options.extraData = body;

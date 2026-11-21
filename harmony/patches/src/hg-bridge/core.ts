@@ -168,7 +168,93 @@ export function getBase(): string {
   return lineStateStore.get();
 }
 
-/** 纯 HTTPS origin 归一（不接受路径/查询/片段/凭据） */
+function ipv4ToInt(value: string): number | null {
+  const parts = value.split(".");
+  if (parts.length !== 4) return null;
+  let out = 0;
+  for (const part of parts) {
+    if (!/^\d+$/.test(part)) return null;
+    const n = Number(part);
+    if (n > 255) return null;
+    out = out * 256 + n;
+  }
+  return out;
+}
+
+function ipv4InCidr(value: string, cidr: string): boolean {
+  const [base, prefixText] = cidr.split("/");
+  const valueInt = ipv4ToInt(value);
+  const baseInt = ipv4ToInt(base);
+  const prefix = Number(prefixText);
+  if (valueInt === null || baseInt === null || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) return false;
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  return ((valueInt & mask) >>> 0) === ((baseInt & mask) >>> 0);
+}
+
+function isForbiddenIpv4(value: string): boolean {
+  // 198.18.0.0/15 stays allowed: it is the documented FakeIP exception.
+  const ranges = [
+    "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
+    "169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24",
+    "192.168.0.0/16", "198.51.100.0/24", "203.0.113.0/24",
+    "224.0.0.0/4", "240.0.0.0/4",
+  ];
+  return ranges.some((cidr) => ipv4InCidr(value, cidr));
+}
+
+function ipv6Groups(value: string): number[] | null {
+  let text = value.toLowerCase().split("%")[0];
+  let head = text;
+  let tail = "";
+  let compressed = false;
+  if (text.includes("::")) {
+    const parts = text.split("::");
+    if (parts.length !== 2) return null;
+    compressed = true;
+    head = parts[0];
+    tail = parts[1];
+  }
+  const headGroups = head.length === 0 ? [] : head.split(":");
+  const tailGroups = tail.length === 0 ? [] : tail.split(":");
+  const missing = 8 - headGroups.length - tailGroups.length;
+  if (missing < 0 || (!compressed && missing !== 0)) return null;
+  const groups = [...headGroups, ...new Array(compressed ? missing : 0).fill("0"), ...tailGroups];
+  const out: number[] = [];
+  for (const group of groups) {
+    if (!/^[0-9a-f]{1,4}$/.test(group)) return null;
+    out.push(parseInt(group, 16));
+  }
+  return out;
+}
+
+function isForbiddenIpv6(value: string): boolean {
+  const groups = ipv6Groups(value);
+  if (groups === null) return true;
+  if (groups.every((group) => group === 0)) return true; // ::
+  if (groups[0] >= 0xfc00 && groups[0] <= 0xfdff) return true; // unique local
+  if (groups[0] >= 0xfe80 && groups[0] <= 0xfebf) return true; // link local
+  if (groups[0] >= 0xfec0 && groups[0] <= 0xfeef) return true; // deprecated site local
+  if (groups[0] >= 0xff00) return true; // multicast
+  if (groups[0] === 0x2001 && groups[1] === 0x0db8) return true; // documentation
+  if (groups.slice(0, 5).every((group) => group === 0)) {
+    const low = groups[6] * 65536 + groups[7];
+    const ipv4 = `${Math.floor(low / 16777216) % 256}.${Math.floor(low / 65536) % 256}.${Math.floor(low / 256) % 256}.${low % 256}`;
+    if (groups[5] === 0 || groups[5] === 0xffff) return isForbiddenIpv4(ipv4);
+  }
+  return false;
+}
+
+function isForbiddenHost(host: string): boolean {
+  const value = host.trim().replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+  if (value.length === 0) return true;
+  if (/(^|\.)localhost$/.test(value) || /(^|\.)local$/.test(value) || /(^|\.)internal$/.test(value) || /(^|\.)home\.arpa$/.test(value)) return true;
+  if (value.includes(":")) return isForbiddenIpv6(value);
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(value)) return isForbiddenIpv4(value);
+  // A single-label HTTPS origin is not a usable public line.
+  return !value.includes(".");
+}
+
+/** 纯 HTTPS 公网 origin 归一（不接受路径/查询/片段/凭据/内网目标） */
 function normalizeBase(raw: string): string | null {
   const text = raw.trim();
   if (text.length === 0) return null;
@@ -177,17 +263,18 @@ function normalizeBase(raw: string): string | null {
     if (parsed.protocol !== "https:") return null;
     if (parsed.pathname !== "/" || parsed.search !== "" || parsed.hash !== "") return null;
     if (parsed.username !== "" || parsed.password !== "") return null;
+    if (isForbiddenHost(parsed.hostname)) return null;
     return parsed.origin;
   } catch {
     return null;
   }
 }
 
-/** 切线路并丢弃旧站点的会话（我们只存一份 token，不按 origin 隔离） */
+/** 切线路前先清旧会话；即使后续写线路失败，也不会把旧 token 发到新 origin。 */
 function applyBaseAndDropSession(url: string): void {
   const previous = getBase();
-  setBase(url);
   if (previous !== url) setSession(null, null);
+  setBase(url);
 }
 
 /** 线路代次：用户在探测期间手动切线路 → 旧结果作废 */
@@ -568,6 +655,29 @@ async function buildNetDiag(): Promise<Record<string, unknown>> {
   };
 }
 
+const ACCOUNT_FIELDS = [
+  "id", "username", "nickname", "avatar", "avatar_color", "sign", "desc",
+  "user_type", "counts", "interactions",
+] as const;
+
+/** 与 Rust normalize_account 对齐：只给前端账号资料和 origin，不透传 token。 */
+function normalizeAccount(value: Json, origin: string): Json {
+  if (value === null || typeof value !== "object") throw "账号资料响应无效";
+  const source = value.user !== null && typeof value.user === "object" ? value.user : value;
+  const user: Record<string, Json> = {};
+  for (const key of ACCOUNT_FIELDS) {
+    if (source[key] !== undefined) user[key] = source[key];
+  }
+  if (typeof user.id !== "number" || !Number.isSafeInteger(user.id) || user.id <= 0) {
+    throw "账号资料响应无效";
+  }
+  const interactions = value.interactions !== undefined ? value.interactions : source.interactions;
+  if (interactions !== undefined) user.interactions = interactions;
+  const account: Record<string, Json> = { user, origin };
+  if (interactions !== undefined) account.interactions = interactions;
+  return account;
+}
+
 function notPorted(cmd: string): never {
   throw `该功能尚未移植到鸿蒙版：${cmd}`;
 }
@@ -598,25 +708,32 @@ export async function invoke<T = Json>(cmd: string, args: Record<string, Json> =
       } as T;
     }
     case "security_set":
-      return true as T;
+      if (!!a.strict) return true as T;
+      throw "鸿蒙版暂不支持关闭严格安全模式";
     case "api_login": {
       const base = getBase();
       const data = await edge("POST", "/api/account/loginByPassword", { username: a.username, password: a.password }, false);
       const token = data?.token;
       if (typeof token !== "string") throw "登录返回缺少 token";
       if (getBase() !== base) throw "登录期间线路已变化，请重新登录";
-      setSession(token, data.user ?? null);
-      return { user: data.user ?? null } as T;
+      const account = normalizeAccount(data, base);
+      setSession(token, account.user);
+      return account as T;
     }
     case "api_register": {
+      const base = getBase();
       const data = await edge(
         "POST",
         "/api/account/registerByPassword",
         { username: a.username, password: a.password, email: a.email ?? "" },
         false,
       );
-      if (typeof data?.token === "string") setSession(data.token, data.user ?? null);
-      return { user: data?.user ?? null } as T;
+      if (getBase() !== base) throw "注册期间线路已变化，请重新登录";
+      const token = data?.token;
+      if (typeof token !== "string") throw "注册返回缺少 token";
+      const account = normalizeAccount(data, base);
+      setSession(token, account.user);
+      return account as T;
     }
     case "api_logout":
       try {
@@ -627,8 +744,12 @@ export async function invoke<T = Json>(cmd: string, args: Record<string, Json> =
         setSession(null, null);
       }
       return { ok: true } as T;
-    case "api_me":
-      return (await edge("GET", "/api/account/me")) as T;
+    case "api_me": {
+      const base = getBase();
+      const data = await edge("GET", "/api/account/me");
+      if (getBase() !== base) throw "读取账号期间线路已变化";
+      return normalizeAccount(data, base) as T;
+    }
     case "api_account_history":
       return (await edge(
         "GET",
@@ -793,20 +914,25 @@ export async function invoke<T = Json>(cmd: string, args: Record<string, Json> =
       const url = normalizeBase(String(a.url ?? ""));
       if (url === null) throw "线路必须是纯 HTTPS origin";
       const previous = getBase();
-      setBase(url);
       if (previous !== url) setSession(null, null);
+      lineGeneration += 1;
+      setBase(url);
       return url as T;
     }
     case "line_custom_set": {
       const url = normalizeBase(String(a.url ?? ""));
       if (url === null) throw "线路必须是纯 HTTPS origin";
       const previous = getBase();
+      if (previous !== url) setSession(null, null);
+      lineGeneration += 1;
       lineStateStore.setCustom(url);
       native().setBase(url);
-      if (previous !== url) setSession(null, null);
       return { base: url, custom: true } as T;
     }
     case "line_reset": {
+      const previous = getBase();
+      if (previous !== DEFAULT_BASE) setSession(null, null);
+      lineGeneration += 1;
       lineStateStore.reset();
       setBase(DEFAULT_BASE);
       return { base: DEFAULT_BASE, custom: false } as T;
@@ -858,7 +984,8 @@ export async function invoke<T = Json>(cmd: string, args: Record<string, Json> =
     case "proxy_state":
       return { mode: "system", url: "" } as T;
     case "proxy_set":
-      return { mode: a.mode ?? "system", url: a.url ?? "" } as T;
+      if ((a.mode ?? "system") === "system") return { mode: "system", url: "" } as T;
+      throw "鸿蒙版暂不支持应用内代理设置，请使用系统代理/VPN";
     case "proxy_test":
       throw "代理自检尚未移植（鸿蒙版走系统代理/VPN）";
     case "net_diag":
@@ -883,8 +1010,12 @@ export async function invoke<T = Json>(cmd: string, args: Record<string, Json> =
       }
       return null as T;
     case "cache_clear":
-      native().clearCache();
-      return null as T;
+      try {
+        native().clearCache();
+      } catch {
+        /* 桥未注入时仍返回明确的“无可清理 Web 缓存”结果 */
+      }
+      return { webCache: false, platform: "harmonyos" } as T;
     case "plugin:app|exit":
       // App.tsx 返回链的末端。鸿蒙版按系统习惯「退到后台」而不是杀进程：
       // ArkTS 侧 background() → UIAbilityContext.moveAbilityToBackground()
