@@ -18,10 +18,10 @@ export default class EntryAbility extends UIAbility {
     });
   }
 
-  /** 硬件返回键：页面栈/弹层能消费就返回 true，否则交回系统（退到后台） */
+  /** 硬件返回键：未由页面消费时也返回 true，让系统退到后台而不是销毁 Ability。 */
   onBackPressed(): boolean {
     const bridge = getSharedBridge();
-    return bridge !== null ? bridge.handleBack() : false;
+    return bridge !== null ? bridge.handleBack() : true;
   }
 
   onWindowStageDestroy(): void {

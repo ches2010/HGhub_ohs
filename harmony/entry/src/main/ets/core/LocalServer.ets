@@ -108,6 +108,102 @@ function sniffMedia(path: string, bytes: Uint8Array): string {
   return byExt;
 }
 
+function ipv4ToInt(value: string): number | null {
+  const parts = value.split('.');
+  if (parts.length !== 4) return null;
+  let out = 0;
+  for (const part of parts) {
+    if (!/^\d+$/.test(part)) return null;
+    const n = Number(part);
+    if (n > 255) return null;
+    out = out * 256 + n;
+  }
+  return out;
+}
+
+function ipv4InCidr(value: string, cidr: string): boolean {
+  const parts = cidr.split('/');
+  const valueInt = ipv4ToInt(value);
+  const baseInt = ipv4ToInt(parts[0]);
+  const prefix = Number(parts[1]);
+  if (valueInt === null || baseInt === null || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) return false;
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  return ((valueInt & mask) >>> 0) === ((baseInt & mask) >>> 0);
+}
+
+function isForbiddenIpv4(value: string): boolean {
+  const ranges = [
+    '0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8',
+    '169.254.0.0/16', '172.16.0.0/12', '192.0.0.0/24', '192.0.2.0/24',
+    '192.168.0.0/16', '198.51.100.0/24', '203.0.113.0/24',
+    '224.0.0.0/4', '240.0.0.0/4'
+  ];
+  return ranges.some((cidr: string) => ipv4InCidr(value, cidr));
+}
+
+function ipv6Groups(value: string): number[] | null {
+  const text = value.toLowerCase().split('%')[0];
+  let head = text;
+  let tail = '';
+  let compressed = false;
+  if (text.includes('::')) {
+    const parts = text.split('::');
+    if (parts.length !== 2) return null;
+    compressed = true;
+    head = parts[0];
+    tail = parts[1];
+  }
+  const headGroups = head.length === 0 ? [] as string[] : head.split(':');
+  const tailGroups = tail.length === 0 ? [] as string[] : tail.split(':');
+  const missing = 8 - headGroups.length - tailGroups.length;
+  if (missing < 0 || (!compressed && missing !== 0)) return null;
+  const tokens = headGroups.concat(new Array(compressed ? missing : 0).fill('0'), tailGroups);
+  const groups: number[] = [];
+  for (const token of tokens) {
+    if (!/^[0-9a-f]{1,4}$/.test(token)) return null;
+    groups.push(parseInt(token, 16));
+  }
+  return groups;
+}
+
+function isForbiddenIpv6(value: string): boolean {
+  const groups = ipv6Groups(value);
+  if (groups === null) return true;
+  if (groups.every((group: number) => group === 0)) return true;
+  if (groups[0] >= 0xfc00 && groups[0] <= 0xfdff) return true;
+  if (groups[0] >= 0xfe80 && groups[0] <= 0xfebf) return true;
+  if (groups[0] >= 0xfec0 && groups[0] <= 0xfeef) return true;
+  if (groups[0] >= 0xff00) return true;
+  if (groups[0] === 0x2001 && groups[1] === 0x0db8) return true;
+  if (groups.slice(0, 5).every((group: number) => group === 0) && (groups[5] === 0 || groups[5] === 0xffff)) {
+    const low = groups[6] * 65536 + groups[7];
+    const ipv4 = `${Math.floor(low / 16777216) % 256}.${Math.floor(low / 65536) % 256}.${Math.floor(low / 256) % 256}.${low % 256}`;
+    return isForbiddenIpv4(ipv4);
+  }
+  return false;
+}
+
+function isForbiddenUpstreamHost(host: string): boolean {
+  const value = host.trim().replace(/^\[/, '').replace(/\]$/, '').toLowerCase();
+  if (value.length === 0) return true;
+  if (/(^|\.)localhost$/.test(value) || /(^|\.)local$/.test(value) || /(^|\.)internal$/.test(value) || /(^|\.)home\.arpa$/.test(value)) return true;
+  if (value.includes(':')) return isForbiddenIpv6(value);
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(value)) return isForbiddenIpv4(value);
+  return !value.includes('.');
+}
+
+function isAllowedUpstreamUrl(value: string): boolean {
+  if (value.length === 0 || value.length > 2048) return false;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'https:') return false;
+    if (parsed.username !== '' || parsed.password !== '') return false;
+    return !isForbiddenUpstreamHost(parsed.hostname);
+  } catch (e) {
+    return false;
+  }
+}
+
 export class LocalServer {
   private port: number;
   private mgr: resourceManager.ResourceManager;
@@ -217,12 +313,37 @@ export class LocalServer {
       return;
     }
     let range = '';
+    let rangeCount = 0;
+    let hasIfRange = false;
+    let host = '';
+    let hostCount = 0;
+    const origins: string[] = [];
     for (let i = 1; i < lines.length; i++) {
       const colon = lines[i].indexOf(':');
-      if (colon > 0 && lines[i].substring(0, colon).trim().toLowerCase() === 'range') {
-        range = lines[i].substring(colon + 1).trim();
+      if (colon <= 0) continue;
+      const name = lines[i].substring(0, colon).trim().toLowerCase();
+      const value = lines[i].substring(colon + 1).trim();
+      if (name === 'range') {
+        rangeCount++;
+        range = value;
+      } else if (name === 'if-range' && value.length > 0) {
+        hasIfRange = true;
+      } else if (name === 'host') {
+        hostCount++;
+        host = value;
+      } else if (name === 'origin') {
+        origins.push(value);
       }
     }
+    if (hostCount !== 1 || host !== `127.0.0.1:${this.port}`) {
+      await this.send(client, 400, 'Bad Request', 'text/plain', encodeText('bad host'), []);
+      return;
+    }
+    if (origins.length > 1 || (origins.length === 1 && origins[0] !== this.origin())) {
+      await this.send(client, 403, 'Forbidden', 'text/plain', encodeText('bad origin'), []);
+      return;
+    }
+    const rangeHeader = rangeCount === 1 && !hasIfRange ? range : '';
     const q = target.indexOf('?');
     const path = q < 0 ? target : target.substring(0, q);
     const query = q < 0 ? '' : target.substring(q + 1);
@@ -239,7 +360,7 @@ export class LocalServer {
       return;
     }
     if (path === '/seg') {
-      await this.serveSegment(client, upstream, range, method === 'HEAD');
+      await this.serveSegment(client, upstream, rangeHeader, method === 'HEAD');
       return;
     }
     if (path === '/img') {
@@ -250,6 +371,9 @@ export class LocalServer {
   }
 
   private async fetchUpstream(url: string): Promise<Uint8Array> {
+    if (!isAllowedUpstreamUrl(url)) {
+      throw new Error('不支持的媒体地址');
+    }
     const base = this.baseProvider();
     const headers = JSON.stringify({ 'Referer': `${base}/`, 'Accept': '*/*' });
     const resp = await httpRequest(url, 'GET', headers, '', false, 20000);
@@ -301,33 +425,38 @@ export class LocalServer {
         return;
       }
       const contentType = sniffMedia(url.split('?')[0], bytes);
+      const total = bytes.byteLength;
       let status = 200;
       let statusText = 'OK';
       const extra: string[] = ['Cache-Control: public, max-age=60', 'Accept-Ranges: bytes'];
-      if (range.startsWith('bytes=')) {
-        const spec = range.substring(6);
+      const spec = range.startsWith('bytes=') ? range.substring(6).trim() : '';
+      if (spec.length > 0 && !spec.includes(',')) {
         const dash = spec.indexOf('-');
         const startText = dash < 0 ? spec : spec.substring(0, dash);
         const endText = dash < 0 ? '' : spec.substring(dash + 1);
-        const total = bytes.byteLength;
-        const start = startText.length === 0 ? 0 : parseInt(startText, 10);
-        let end = endText.length === 0 ? total - 1 : parseInt(endText, 10);
-        if (isNaN(start) || start >= total) {
+        const hasStart = startText.length > 0;
+        const hasEnd = endText.length > 0;
+        const start = hasStart ? Number(startText) : 0;
+        const end = hasEnd ? Number(endText) : total - 1;
+        const valid = (!hasStart || (/^\d+$/.test(startText) && Number.isSafeInteger(start) && start >= 0))
+          && (!hasEnd || (/^\d+$/.test(endText) && Number.isSafeInteger(end) && end >= 0));
+        if (valid && hasStart && start >= total) {
           await this.send(client, 416, 'Range Not Satisfiable', 'text/plain', encodeText('range'), [
             `Content-Range: bytes */${total}`
           ]);
           return;
         }
-        if (isNaN(end) || end >= total) {
-          end = total - 1;
+        if (valid && start <= end && start < total) {
+          const clippedEnd = Math.min(end, total - 1);
+          bytes = bytes.subarray(start, clippedEnd + 1);
+          status = 206;
+          statusText = 'Partial Content';
+          extra.push(`Content-Range: bytes ${start}-${clippedEnd}/${total}`);
         }
-        bytes = bytes.subarray(start, end + 1);
-        status = 206;
-        statusText = 'Partial Content';
-        extra.push(`Content-Range: bytes ${start}-${end}/${total}`);
+        // Invalid or unsatisfiable-but-not-beyond-EOF ranges intentionally fall back to a full 200 response.
       }
       const body = headOnly ? new Uint8Array(0) : bytes;
-      await this.send(client, status, statusText, contentType, body, extra);
+      await this.send(client, status, statusText, contentType, body, extra, headOnly ? bytes.byteLength : undefined);
     } catch (e) {
       const msg = (e as Error).message;
       await this.send(client, 502, 'Bad Gateway', 'text/plain', encodeText(msg), []);
@@ -346,7 +475,11 @@ export class LocalServer {
         plain = stripPadding(await aesCbcDecrypt(raw));
       }
       const kind = imageKind(plain);
-      await this.send(client, 200, 'OK', kind.length > 0 ? kind : 'image/jpeg', plain, [
+      if (kind.length === 0) {
+        await this.send(client, 502, 'Bad Gateway', 'text/plain', encodeText('not an image'), []);
+        return;
+      }
+      await this.send(client, 200, 'OK', kind, plain, [
         'Cache-Control: public, max-age=3600'
       ]);
     } catch (e) {
@@ -412,7 +545,7 @@ export class LocalServer {
     }
     await this.send(client, 200, 'OK', mimeOf(clean), headOnly ? new Uint8Array(0) : bytes, [
       'Cache-Control: no-cache'
-    ]);
+    ], headOnly ? bytes.byteLength : undefined);
   }
 
   private async send(
@@ -421,12 +554,13 @@ export class LocalServer {
     statusText: string,
     contentType: string,
     body: Uint8Array,
-    extra: string[]
+    extra: string[],
+    contentLength?: number
   ): Promise<void> {
     const headerLines: string[] = [];
     headerLines.push(`HTTP/1.1 ${status} ${statusText}`);
     headerLines.push(`Content-Type: ${contentType}`);
-    headerLines.push(`Content-Length: ${body.byteLength}`);
+    headerLines.push(`Content-Length: ${contentLength === undefined ? body.byteLength : contentLength}`);
     headerLines.push('Access-Control-Allow-Origin: *');
     headerLines.push('X-Content-Type-Options: nosniff');
     for (const line of extra) {

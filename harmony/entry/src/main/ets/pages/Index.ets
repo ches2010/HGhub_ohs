@@ -10,6 +10,11 @@ const TAG: string = 'HGhubX';
 const PORT: number = 17860;
 /** 本地服务起来后多久还没 onPageEnd 就认为异常（毫秒） */
 const LOAD_WATCHDOG_MS: number = 6000;
+// 临时排查白屏：强制显示诊断面板。排查完成后改回 false 或删除本行。
+const FORCE_DIAGNOSTICS: boolean = false;
+// 首次 onLoad 后检查 React 是否真正挂载；未挂载时自动重载一次。
+const FIRST_RENDER_CHECK_MS: number = 2500;
+const MAX_FIRST_RENDER_RELOADS: number = 1;
 
 @Entry
 @Component
@@ -28,6 +33,10 @@ struct Index {
   private server: LocalServer | null = null;
   private bridge: Bridge | null = null;
   private registered: boolean = false;
+  private firstAutoReloadDone: boolean = false;
+  private autoReloadCount: number = 0;
+  private activeLoadUrl: string = '';
+  private reloadEpoch: number = 0;
 
   aboutToAppear(): void {
     const context = this.abilityContext();
@@ -69,6 +78,7 @@ struct Index {
 
   /** 显式 loadUrl；控制器还没 attach 时退回改 @State */
   private loadTarget(url: string): void {
+    this.activeLoadUrl = url;
     try {
       this.controller.loadUrl(url);
       hilog.info(0x0000, TAG, 'loadUrl %{public}s', url);
@@ -112,6 +122,7 @@ struct Index {
   }
 
   private reload(): void {
+    this.reloadEpoch++;
     this.pageLoaded = false;
     this.lastLoadError = '';
     if (this.targetUrl.length > 0) {
@@ -200,12 +211,33 @@ struct Index {
         .onPageEnd(() => {
           this.pageLoaded = true;
           this.diagOpen = this.bundleMissing;
-          hilog.info(0x0000, TAG, 'page loaded ok');
+          hilog.info(0x0000, TAG, 'page loaded ok active=%{public}s target=%{public}s',
+            this.activeLoadUrl, this.targetUrl);
           const bridge = this.bridge;
           if (bridge !== null) {
             bridge.setPageReady();
           }
+
+          // Temporary workaround: the first WebView render can stay blank while
+          // resources and onPageEnd are OK. A manual reload fixes it, so force
+          // one native reload after the real index.html page finishes loading.
+          const isTargetPage = this.activeLoadUrl === this.targetUrl
+            && this.targetUrl.indexOf('/index.html') >= 0;
+          if (!isTargetPage || this.firstAutoReloadDone) {
+            return;
+          }
+          this.firstAutoReloadDone = true;
+          const epoch = this.reloadEpoch;
+          hilog.warn(0x0000, TAG, 'scheduling forced first-load reload');
+          setTimeout(() => {
+            if (epoch !== this.reloadEpoch) {
+              return;
+            }
+            hilog.warn(0x0000, TAG, 'forcing first-load reload now');
+            this.reload();
+          }, 1500);
         })
+
         .onConsole((event): boolean => {
           if (event !== undefined && event !== null) {
             hilog.info(0x0000, TAG, 'web console: %{public}s', event.message.getMessage());
@@ -227,9 +259,14 @@ struct Index {
         .onHttpErrorReceive((event) => {
           if (event !== undefined && event !== null) {
             const code = event.response.getResponseCode();
-            hilog.error(0x0000, TAG, 'http %{public}d url=%{public}s',
-              code, event.request.getRequestUrl());
-            this.lastLoadError = `HTTP ${code} @ ${event.request.getRequestUrl()}`;
+            const url = event.request.getRequestUrl();
+            // 浏览器默认探测 /favicon.ico；缺失不影响页面，避免误导性的红色诊断。
+            if (url.endsWith('/favicon.ico')) {
+              hilog.warn(0x0000, TAG, 'http %{public}d url=%{public}s (favicon ignored)', code, url);
+              return;
+            }
+            hilog.error(0x0000, TAG, 'http %{public}d url=%{public}s', code, url);
+            this.lastLoadError = `HTTP ${code} @ ${url}`;
             if (!this.pageLoaded) {
               this.diagOpen = true;
               this.runPing();
@@ -237,7 +274,7 @@ struct Index {
           }
         })
 
-      if (this.diagOpen || this.bundleMissing || this.bootError.length > 0) {
+      if (FORCE_DIAGNOSTICS || this.diagOpen || this.bundleMissing || this.bootError.length > 0) {
         this.diagnosePanel()
       }
     }

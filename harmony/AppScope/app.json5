@@ -2,8 +2,8 @@
   "app": {
     "bundleName": "com.hghubx.harmony",
     "vendor": "hghubx",
-    "versionCode": 2000000,
-    "versionName": "2.0.0",
+    "versionCode": 2002004,
+    "versionName": "2.2.4",
     "icon": "$media:app_icon",
     "label": "$string:app_name"
   }

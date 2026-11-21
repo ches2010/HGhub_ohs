@@ -94,14 +94,14 @@ cd harmony && hvigorw --mode module -p module=entry@default -p product=default a
 
 ### 已移植（60 个命令里的绝大多数）
 
-`app_boot`、`security_set`、`api_login/register/logout/me`、`api_feed`、`api_original_videos`、
+`app_boot`、`security_set`（仅保持严格模式，关闭会明确报错）、`api_login/register/logout/me`、`api_feed`、`api_original_videos`、
 `api_topics/topic/tags/tag_videos`、`api_category`、`api_rank`、`api_search`、`api_posts/post/post_playback`、
 `api_post_like/post_collect/post_comments/post_categories/post_category`、`api_video`、`api_play`（含新旧接口回退）、
 `api_related`、`api_comments/comment_send`、`api_like/collect/follow`、`api_user/user_stats/user_videos`、
 `api_following`、`open_url`、`set_orientation`、`set_text_interaction`、`debug_log`、`cache_clear`、
 `line_state/line_set/line_custom_set/line_reset/line_cancel`、
 `line_mirrors`（发布页 `publish.js` 解析）、`line_probe`、`line_auto`、`line_try_main`、`line_health`、
-`net_diag`（精简版：系统网络快照 + 真实接口探测）、`check_update`（GitHub Release + 版本号抠取）、`proxy_state/proxy_set`、
+`net_diag`（精简版：系统网络快照 + 真实接口探测）、`check_update`（GitHub Release + 版本号抠取）、`proxy_state`、`proxy_set`（仅支持保持 system，custom/off 会明确报错）、
 `api_search_hot`（DOM 解析官网 SSR 热搜榜）、`plugin:app|exit`（返回链末端 → 退到后台）。
 
 ### 未移植（有明确占位，不会静默出错）
@@ -111,6 +111,8 @@ cd harmony && hvigorw --mode module -p module=entry@default -p product=default a
 | `proxy_test` | 抛错 | 鸿蒙没有应用级 HTTP 代理配置，本来就走系统代理/VPN；要做得接 `@ohos.net.connection` 的代理查询 |
 | `net_diag` 的 DNS/TCP 分段 | 精简 | 现在给的是"系统 DNS 服务器 + HTTP 探测耗时"，没有真正发起 DNS 查询与独立 TCP 连接（`tcp.skipped=true` 会如实显示） |
 | `playback_log_*` | 关闭 | 播放诊断日志依赖文件写入，移动端默认关掉 |
+| `security_set(false)` | 报错 | 鸿蒙版当前恒定严格安全模式，不接受关闭 |
+| `proxy_set(custom/off)` | 报错 | 鸿蒙版当前按系统代理/VPN 走，不提供应用内代理设置 |
 
 ## 5. 已知风险（按踩坑概率排序）
 
@@ -192,7 +194,7 @@ UIAbility.onBackPressed()                      // 同步，必须立刻返回 bo
   界面侧本来就用 `url` 打开 Release 页面（`Settings.tsx` 的 `doUpdate`）。若将来有人上传 `.hap`，
   会自动被选中最优包。
 - ⚠️ **版本号要对齐两处**：`check_update` 比的是前端版本（vite 注入的 `package.json` version），
-  而系统「应用信息」里显示的是 `AppScope/app.json5` 的 `versionName`。两者都保持 `2.0.0`，
+  而系统「应用信息」里显示的是 `AppScope/app.json5` 的 `versionName`。两者都保持一致（当前为 `2.2.4`），
   否则升级后会出现"检查更新一直说有新版"或"明明更新了还提示旧版"。
 
 ## 5.6 DevEco 首次编译对齐记录（2026-11-16）

@@ -132,7 +132,8 @@ export class Bridge {
   handleBack(): boolean {
     const controller = this.controller;
     if (controller === null || !this.pageReady || !this.backEnabled) {
-      return false;
+      // Returning true lets the system move the UIAbility to background instead of destroying it.
+      return true;
     }
     controller.runJavaScript('window.__hgBackEvent && window.__hgBackEvent()').catch((err: BusinessError) => {
       hilog.warn(0x0000, TAG, 'back event failed: %{public}s', err.message);
