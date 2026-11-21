@@ -192,62 +192,16 @@ function isForbiddenUpstreamHost(host: string): boolean {
   return !value.includes('.');
 }
 
-interface ParsedHttpsUrl {
-  host: string;
-  port: string;
-}
-
-function parseHttpsUrl(value: string): ParsedHttpsUrl | null {
-  const text = value.trim();
-  if (!text.startsWith('https://')) return null;
-  const rest = text.substring(8);
-  if (rest.length === 0 || /\s/.test(rest)) return null;
-
-  let end = rest.length;
-  for (let i = 0; i < rest.length; i++) {
-    const ch = rest.charAt(i);
-    if (ch === '/' || ch === '?' || ch === '#') {
-      end = i;
-      break;
-    }
-  }
-  const authority = rest.substring(0, end);
-  if (authority.length === 0 || authority.indexOf('@') >= 0) return null;
-
-  let host = '';
-  let port = '';
-  if (authority.startsWith('[')) {
-    const close = authority.indexOf(']');
-    if (close < 0) return null;
-    host = authority.substring(1, close);
-    const suffix = authority.substring(close + 1);
-    if (suffix.length === 0) {
-      port = '';
-    } else if (suffix.startsWith(':')) {
-      port = suffix.substring(1);
-    } else {
-      return null;
-    }
-  } else {
-    const colon = authority.lastIndexOf(':');
-    if (colon < 0) {
-      host = authority;
-    } else {
-      host = authority.substring(0, colon);
-      port = authority.substring(colon + 1);
-    }
-  }
-
-  host = host.toLowerCase();
-  if (host.length === 0) return null;
-  if (port.length > 0 && (!/^\d{1,5}$/.test(port) || Number(port) > 65535)) return null;
-  if (isForbiddenUpstreamHost(host)) return null;
-  return { host: host, port: port };
-}
-
 function isAllowedUpstreamUrl(value: string): boolean {
   if (value.length === 0 || value.length > 2048) return false;
-  return parseHttpsUrl(value) !== null;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'https:') return false;
+    if (parsed.username !== '' || parsed.password !== '') return false;
+    return !isForbiddenUpstreamHost(parsed.hostname);
+  } catch (e) {
+    return false;
+  }
 }
 
 export class LocalServer {

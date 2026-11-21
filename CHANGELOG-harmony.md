@@ -44,21 +44,6 @@
 
 ### 前端（随层内补丁）
 - `LinePicker`：鸿蒙下切线路提示改为「切换线路后需重新登录」（移植层只存一份 token，切线路即清会话）。
-### 账号与线路契约
-- `api_login`、`api_register`、`api_me` 统一返回 `{ user, origin, interactions? }`，不再把上游 token 透传给前端。
-- 切换线路、自定义线路和恢复主站前先清除旧会话；手动线路操作推进探测代次，避免在途自动选线覆盖用户选择。
-- 移除 `huangguoai.ai` 固定 API 线路；该域名只作导航用途。
-- `normalizeBase()` 拒绝回环、内网、链路本地和保留地址；保留 FakeIP `198.18.0.0/15` 例外。
-
-### 本地媒体服务
-- `/img`、`/hls`、`/seg` 的 `u=` 只接受 HTTPS 公网地址，并校验 `Host` / `Origin`。
-- Range 请求按单段语义处理：非法、多段或带 `If-Range` 时回退完整 200；仅起始位置越界返回 416。
-- HEAD 响应保留所选表示的 `Content-Length`；解密后非图片的封面返回 502。
-
-### 平台接口
-- `cache_clear` 返回 `{ webCache:false, platform:'harmonyos' }`，避免设置页读取空对象。
-- `security_set(false)` 与 `proxy_set(custom/off)` 明确报错，不再伪装成功。
-
 
 ### 版本
 - `AppScope/app.json5`、`oh-package.json5` 对齐 `2.2.4`。
@@ -230,11 +215,6 @@
 | `harmony-web-bundle` run #2（`44790422678`） | v2.2.4 同步合并后触发 | success（约 59 s）：v2.2.4 www 22 资产 + zip 946 KB/106 条目回写 `bfcf3d3` |
 | PR #10 三轮 CI | doc-links → 恢复 `tv.yml`；extended 端口冲突 → `ci.yml` 对齐上游 | 第 3 轮全绿（Frontend/smoke/Playback core+extended/Rust/TV build & acceptance） |
 | main `e547e0c8` CI | 产物回写后补空提交触发 | 全绿 |
-| 本次审计 / 同步本地校验 | `npx tsc --noEmit`、`tsc --project tsconfig.node.json`、`tsc --project tsconfig.tests.json`、`check-i18n`、`check-doc-links`、`check-size-budgets`、`check-version-sync` | 全部 exit 0；i18n 校验 794 个键 |
-| Colab HAP 构建 | `bash harmony/scripts/build-hap.sh`（command-line-tools + SDK） | `BUILD SUCCESSFUL`，生成 unsigned HAP |
-| 真机验证 | 签名 HAP 安装后启动 | 复现首帧空白；应用强制重载补丁后正常进入 App |
-| 沙箱 Vite 构建 | `npx vite build` | 因嵌入式 Node 缺少 WebAssembly 失败；属环境限制，GitHub CI Frontend build 通过 |
-| main `cdaaffdf` CI | 更新日志合并后触发 | success |
 
 ### 5. 真机排障记录（按发生顺序）
 

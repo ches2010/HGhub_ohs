@@ -368,14 +368,14 @@ export default function Settings({ onBack, initialSection }: { onBack: () => voi
             <Button onClick={() => setAbout(true)} className="ios-settings-row text-left pressable">
               <span className="ios-setting-icon"><IInfo size={16} /></span>
               <div className="flex-1">
-                <div className="text-[14px] text-on">{tr("关于 HGhubX")}</div>
+                <div className="text-[14px] text-on">{tr("关于 HGhub_ohs")}</div>
                 <div className="text-[12px] text-mut">{tr("版本 {0} · 仅限非商业使用", APP_VERSION)}</div>
               </div>
               <IChevR size={15} className="text-mut" />
             </Button>
           </>)}
 
-          <div className="text-center text-[12px] text-dim mt-5">{tr("HGhubX {0} · {1} 客户端", APP_VERSION, platform === "android" ? "Android" : platform === "ios" ? "iOS" : platform === "macos" ? "macOS" : platform === "linux" ? "Linux" : "Windows")}</div>
+          <div className="text-center text-[12px] text-dim mt-5">{tr("HGhub_ohs {0} · HarmonyOS 客户端", APP_VERSION)}</div>
         </div>
       </div>
 
@@ -413,25 +413,25 @@ export default function Settings({ onBack, initialSection }: { onBack: () => voi
         </div>
       </Modal>
 
-      <Modal label={tr("关于 HGhubX")} open={about} onClose={() => setAbout(false)} width={392}>
+      <Modal label={tr("关于 HGhub_ohs")} open={about} onClose={() => setAbout(false)} width={392}>
         <div className="p-5">
           <div className="flex items-center gap-3">
             <span className="w-11 h-11 rounded-(--r-sm) brand-grad glow-neon flex items-center justify-center text-on-primary text-[17px] font-black">H</span>
             <div>
-              <div className="text-[16px] font-bold text-on leading-tight">HGhubX</div>
-              <div className="text-[12px] text-mut mt-0.5">{tr("HGhubX 客户端 v{0}", APP_VERSION)}</div>
+              <div className="text-[16px] font-bold text-on leading-tight">HGhub_ohs</div>
+              <div className="text-[12px] text-mut mt-0.5">{tr("HGhub_ohs 鸿蒙客户端 v{0}", APP_VERSION)}</div>
             </div>
           </div>
 
-          <p className="text-[13px] text-on/70 leading-relaxed mt-4">{tr("基于 Rust + Tauri 2 构建的跨平台客户端，支持 Windows、macOS、Linux、Android 与 iOS。")}</p>
+          <p className="text-[13px] text-on/70 leading-relaxed mt-4">{tr("基于 ArkWeb + ArkTS 构建的 HarmonyOS 客户端，通过本地回环服务代理媒体资源，支持手机与平板。")}</p>
 
           <Surface className="mt-4 rounded-(--r-sm) bg-s3/60 p-3 text-[12px] text-mut leading-relaxed">{tr("仅限符合使用条款的成年人使用；禁止在中国大陆地区下载和传播本软件及相关资源。 第三方内容的权利属于各自权利人，访问内容不代表获得下载或传播授权。")}</Surface>
 
           <div className="mt-4 divide-y divide-s3">
-            <Button aria-label={tr("打开项目仓库")} onClick={() => { api.openUrl("https://github.com/zxsos/HGhubX").catch(() => { copyText("https://github.com/zxsos/HGhubX").then(() => toast(tr("仓库地址已复制"), "ok")).catch(() => {}); }); }}
+            <Button aria-label={tr("打开项目仓库")} onClick={() => { api.openUrl("https://github.com/ches2010/HGhub_ohs").catch(() => { copyText("https://github.com/ches2010/HGhub_ohs").then(() => toast(tr("仓库地址已复制"), "ok")).catch(() => {}); }); }}
               className="w-full flex items-center gap-2 py-2.5 text-left pressable">
               <ILink size={15} className="text-mut" />
-              <span className="text-[13px] text-on/85">github.com/zxsos/HGhubX</span>
+              <span className="text-[13px] text-on/85">github.com/ches2010/HGhub_ohs</span>
               <span className="ml-auto text-[12px] text-primary">{tr("打开")}</span>
             </Button>
             <Button onClick={() => { copyText("https://huangguoai.com").then(() => toast(tr("站点地址已复制"), "ok")).catch(() => {}); }}

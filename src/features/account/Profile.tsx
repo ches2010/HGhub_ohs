@@ -430,7 +430,7 @@ function ProfileContent({ wide, active }: { wide: boolean; active: boolean }) {
           {clearError && !clearOpen && <p role="alert" className="mt-2 text-[13px] text-danger">{clearError}</p>}
         </div>
 
-        <div className="text-center text-[12px] text-dim mt-5">{tr("HGhubX {0} · {1} 客户端", APP_VERSION, platform === "android" ? "Android" : platform === "ios" ? "iOS" : platform === "macos" ? "macOS" : platform === "linux" ? "Linux" : "Windows")}</div>
+        <div className="text-center text-[12px] text-dim mt-5">{tr("HGhub_ohs {0} · HarmonyOS 客户端", APP_VERSION)}</div>
       </div>
       <Modal open={removeOpen} onClose={() => { if (!removalPending.current) setRemoveOpen(false); }} label={tr("批量移除")}>
         <div className="p-5">
