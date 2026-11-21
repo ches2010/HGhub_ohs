@@ -3,11 +3,24 @@
 本文件只记录 **`harmony/`（HAP 移植层）** 及其配套补丁层、构建脚本、CI 的变更。
 上游前端 / Rust 侧的变更请看上游仓库的 release notes（本仓库同步上游时会在提交里注明基线）。
 
-当前 HAP 版本：**2.2.4**（`versionCode` 2002004，跟随上游 v2.2.4）
+当前 HAP 版本：**2.2.5**（`versionCode` 2002005，跟随上游 v2.2.5）
 技术栈：ArkWeb 宿主 + ArkTS 桥 + loopback HTTP 服务（`127.0.0.1:17860`）
 
 文末「[验证与测试记录](#验证与测试记录)」是移植过程中实际跑过的检查项（含命令、用例数与结果，
 以及**未覆盖**的部分），可作为回归时的自检清单。
+
+---
+
+## [2.2.5] 2026-11-21 — 同步上游 v2.2.5
+
+- 合并上游 main（v2.2.5，合并提交 `d64bb2d`）。上游要点（详见 `docs/release-notes/v2.2.5.md`）：
+  - 繁体字幕轨与界面繁体本地化（#190），支持按系统语言自动选择
+  - 播放器组件抽离重构（#192），修复快进后拖动进度条画面跳动
+  - 倍速按钮长按弹出自定义倍速面板（#193），预设 0.5x 步进与常用档位
+  - 私人壳 / 影子壳封面图防串扰（#194），仅显示当前条目
+  - 键盘输入法面板避让（#191），评论框随键盘上移
+  - 打包更新：Windows NSIS 校验、macOS Universal DMG、Linux amd64 `.deb`、Android ABI 分包 `versionCode=2002005`、iOS `.ipa` 已签名
+- 本仓库随合并自动获得上述前端与 Rust 变更；鸿蒙层无接口变化，`app.json5` 版本对齐 `2.2.5`。
 
 ---
 
@@ -39,16 +52,69 @@
 
 ## [2.2.4] 2026-11-20
 
-- 同步上游 **v2.2.4**（`d69dd0a`），HarmonyOS 层在其上重放（`a70d048`）。
-- CI 对齐上游：`ci.yml` 跟进 v2.2.4（`fee4889`），保留上游 `tv.yml` 以免文档链接失效（`96de229`）。
-- CI 重建前端产物与 zip（`bfcf3d3`）。
+### 同步上游（PR #10，合并提交 `f5cd74e`）
+
+- 合并上游 74 个提交（v2.2.2 / v2.2.3 / v2.2.4，至 `d69dd0a`）：
+  - 播放与全屏切集系列修复（上游 #176–#182）、横竖屏提示不堆叠、移除横版视频重复控件
+  - 移动端播放控件与横屏布局优化、桌面全屏锚定与闲置隐藏
+  - 搜索历史长按批量删除（#184）、启动页偏好（#180/#185）
+  - 帖子详情防闪烁（#165/#166）、个人库滚动加载与多选删除（#168/#169）
+  - TV 子项目独立版本号（`src-tauri/tauri.tv.conf.json`）与独立 CI/CD `tv.yml`
+  - `AGENTS.md` 维护者约定更新；回归测试扩充（post-flicker、home-controls、ui-feedback）
+
+### 鸿蒙层重放与适配
+
+- `vite.config.ts` 三方合并：上游「标准版 / TV 版双版本号注入」+ 本仓库 hg-bridge alias（合并结果与「fork + 上游 diff」逐行一致）
+- `src/shared/api/api.ts` 三方合并：上游 `api_login` reauth 参数 + 本仓库 `isHarmony` UA 检测、平台判定与 hg 本地服务地址
+- hg-bridge 命令面核对：上游新增 invoke 调用均在既有 64 个 case 内，无需增补
+
+### CI 与工作流
+
+- `ci.yml` 对齐上游 v2.2.4：playback `tv` 场景移至 `tv.yml` 独立验收（消除 fixture 端口冲突）、core 增加 post-flicker 回归、ffmpeg .deb 缓存安装修复
+- 恢复上游 `tv.yml` 以满足 `check-doc-links` 对 `docs/subsystems/build-release.md` 的链接校验
+
+### 过程记录
+
+1. 巡检发现上游领先 74 个提交，且 PR #2–#7 改动已全部包含于 main，关闭这 6 个冗余 PR。
+2. 以「上游 `d69dd0a` 树为基线 + 73 条差异覆盖」构造同步树；合并文件先经 `PUT /contents` 写入临时分支 `tmp-blobs24` 取得 blob sha 再引用。
+3. 首轮树构造误用 sync 分支空提交的树当作 main 树，导致 `harmony-web-bundle.yml` 丢失、`ci.yml` 被覆盖；改用 main 真实树 `50212f98` 重新分类重建。
+4. CI 第 1 轮：Frontend build 失败（`check-doc-links` 要求 `tv.yml` 存在）→ 恢复上游 `tv.yml`（`96de229`）。
+5. CI 第 2 轮：Playback (extended) 失败（旧 `ci.yml` 的 `tv` 场景与新测试脚本端口冲突，12/13 通过）→ 经确认将 `ci.yml` 全量对齐上游 v2.2.4（`fee4889`）。
+6. 第 3 轮全绿后合并；`harmony-web-bundle` run #2 重建产物并回写 main（`bfcf3d3`）；补空提交 `e547e0c8` 使 main 具备完整检查结论；删除临时分支。
 
 ---
 
 ## [2.2.0] 2026-11-18
 
-- 同步上游 **v2.2.0**（`a7d22db`），HarmonyOS 层重放（`82993ad`、`6b8b3d2`）。
-- CI 两次重建 `rawfile/www` 与 zip（`90f2cb2` 等）。
+### 同步上游（PR #9，合并提交 `684e5a3`）
+
+- 合并上游 49 个提交（v2.2.0，`a7d22db`）：前端目录重构为 `features / shared / app / tv` 并新增 Android TV 版；Rust 端拆分为 `api / net / media / lines`；会话跨线路保持、启动 overlay、诊断导出限制；回归套件精简为 smoke + 6 项。
+
+### 鸿蒙层重放与适配
+
+- `hg-bridge` 增补 v2.2.0 命令：观看历史云端同步 `api_account_history*`、`api_post_tag`、`api_topic` 分页
+- 无 `window.hghub` 时 `invoke` / `addPluginListener` 回退 Tauri 官方通道（修复浏览器测试全红）
+- `isTauri` 恢复函数语义；剪贴板写入走插件 IPC
+- `scripts/fixtures/app-ui.mjs` 与 `tests/tv-remote-fixture.mjs` 兼容 Tauri v2 数字回调 id
+- `harmony/patches/apply-patch.mjs` 锚点重写至 v2.2.0 文件布局
+
+### 前置修复批次（PR #2–#7，内容随 #9 生效；相应 PR 已于 2026-11-20 关闭）
+
+- PR #2：修复 hg-bridge 无 `window.hghub` 时的调用回退（CI 全红根因）
+- PR #3：根 README 构建说明与 `harmony/README` 对齐（`hvigorw` → `build-hap.sh`）
+- PR #4：`compatibleSdkVersion` 升至 `6.0.0(20)`、hvigor `modelVersion` 升至 `6.0.0`（面向鸿蒙 6/7）
+- PR #5：`harmony/README.md` 重复「## 许可」标题修复
+- PR #6：重打包自包含 zip 并同步补丁层修复
+- PR #7：`oh-package` `modelVersion` 同步 6.0.0、`build-hap.sh` 增加 unsigned HAP 签名提示
+
+### 过程记录
+
+1. 先尝试跨仓库 sync PR #8（head `zxsos:main`），因两仓库提交历史不同无法自动合并，关闭；改用「自建分支 + 树构造」方案。
+2. 首次合并误用上游旧基线 `bebfb7a`，src-tauri 处于 v2.1.x/v2.2.0 混合态（Rust 通过但 Frontend/smoke/playback 失败）；改为「以上游 `a7d22db` 树为基线 + 重放鸿蒙差异」后解决。
+3. `POST /git/blobs` 上传大 blob 内容损坏（core.ts、apply-patch.mjs、vite.config.ts、api.ts 共 4 个），改经 `PUT /contents` 写入临时分支后引用正确 sha；同步补上两个 fixture 修复版。
+4. 最终同步提交 `6b8b3d2` CI 全绿；`harmony-web-bundle` run #1（`44392530763`，约 57 秒）重建 www 并重打包 zip，回写 sync 分支（`90f2cb2`）。
+5. GITHUB_TOKEN 提交不触发 CI，补空提交 `6b5448a` 让 PR 检查在最终 head 重跑，全绿后合并 PR #9。
+6. 合并后 main CI 首轮出现两个基础设施抖动失败（apt 源临时找不到 ffmpeg、kernel.org 镜像 IPv6 不可达），`rerun-failed-jobs` 重跑后全部通过。
 
 ---
 
@@ -145,6 +211,10 @@
 | `harmony/` 全量一致性 | 拉递归 tree 与本地逐文件比 sha | 33/33 完全一致（无漏推、无内容漂移） |
 | 自包含 zip | 打包后回读 zip，逐条比 sha | 包内 33 个 harmony 文件与远端全等 |
 | 权限定位 | 同一 blob 分别写普通路径与 `.github/workflows/` | 前者 201、后者 403 → 确认缺 `Workflows: write`（非内容问题） |
+| `harmony-web-bundle` run #1（`44392530763`） | v2.2.0 同步后触发 | success（约 57 s）：构建 www → 重打包 zip → 回写 `90f2cb2` |
+| `harmony-web-bundle` run #2（`44790422678`） | v2.2.4 同步合并后触发 | success（约 59 s）：v2.2.4 www 22 资产 + zip 946 KB/106 条目回写 `bfcf3d3` |
+| PR #10 三轮 CI | doc-links → 恢复 `tv.yml`；extended 端口冲突 → `ci.yml` 对齐上游 | 第 3 轮全绿（Frontend/smoke/Playback core+extended/Rust/TV build & acceptance） |
+| main `e547e0c8` CI | 产物回写后补空提交触发 | 全绿 |
 
 ### 5. 真机排障记录（按发生顺序）
 
