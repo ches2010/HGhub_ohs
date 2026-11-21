@@ -29,6 +29,7 @@ Feed 负责列表播放页的条目位置、详情/帖子读取、标签门、�
   [`src/shared/model/accountData.ts`](../../src/shared/model/accountData.ts) 的 `generation`；
   [`src/shared/model/contentPreferences.ts`](../../src/shared/model/contentPreferences.ts) 的 `blockReason`。
 - 后端读取：[`src-tauri/src/api/feed.rs`](../../src-tauri/src/api/feed.rs)、
+  [`src-tauri/src/channel_page.rs`](../../src-tauri/src/channel_page.rs)、
   [`src-tauri/src/api/video.rs`](../../src-tauri/src/api/video.rs)、
   [`src-tauri/src/api/interact.rs`](../../src-tauri/src/api/interact.rs)。
 
@@ -98,12 +99,14 @@ Feed 负责列表播放页的条目位置、详情/帖子读取、标签门、�
   或下层 Feed。
 - 手势 overlay 的挂载只取决于条目是否活跃，不取决于 `playUrl` 是否已解析；否则切集
   过渡期的触摸会被列表原生滚动吃掉（2.2.0 反馈的连划跳视频根因）。
-- 标准版「我的」卡片支持电脑右键、手机长按进入多选，继续点按切换选择；收藏页逐项取消收藏，历史页
-  调用 `removeHistory()` 只删除选中记录。批量操作需确认，切换收藏/历史或短剧/帖子会清空选择；
+- 标准版「我的」卡片支持电脑右键、手机长按进入多选，继续点按切换选择，并可通过批量栏「全选」选中当前分栏全量记录（含未滚入视口的分页）；收藏页逐项取消收藏，历史页按选中范围调用 `clearHistory()` 或 `removeHistory()` 删除记录。批量操作需确认，切换收藏/历史或短剧/帖子会清空选择；
   收藏部分失败时保留失败项供重试，未选中的观看记录和收藏互不影响。批量取消收藏在开始时捕获
   `accountGeneration` 与 `actionRevision`；每项请求前后都校验二者，线路/代理事件或组件卸载会使修订号失效，
   随即停止未发送项并抑制旧批次的错误、完成状态与 toast。账号代次检查独立于组件重挂载，避免 cleanup
   执行前队列继续用新账号发起下一项。
+- 分类与原创频道读取（`api_category` / `api_original_videos`）优先解析官网服务端渲染频道页（[`src-tauri/src/channel_page.rs`](../../src-tauri/src/channel_page.rs)）：`ai-duanju` / `ai-manju` 对应 `/{cate}/`（`latest`）、`/{cate}/hot/`（`hot`）、`/{cate}/random/`（`random`），`original` 对应 `/original/`（`drama`）、`/original/manju/`（`comic`）、`/original/duanju/`（`short`），按 `section.hg-channel-page .hg-card-grid[data-channel-panel=...]` 严格读取非隐藏面板并还原标签、集数、播放量、评分与角标字段；分类总览预览行（`page=1 && size < 20`）按 `size` 截断，频道分页保留官网整页卡片防止跳项。任意抓取/解析失败或非预设分类自动回退既有 JSON 接口，保持 `Paged<VideoCard>` 契约不变。
+- 分页列表（频道页、吃瓜列表、专题/标签详情、关注/创作者作品与全局/栏目搜索）统一使用 [`src/shared/lib/useAutoLoadMore.ts`](../../src/shared/lib/useAutoLoadMore.ts)（`IntersectionObserver` + 滚动位置检查）在接近底部哨兵时自动加载下一页，正常态不再展示手动「加载更多」按钮；开启标签屏蔽时同样保持上滑自动加载，仅当连续 2 页过滤后均无可见条目（`AUTO_LOAD_EMPTY_PAGE_LIMIT = 2`）才暂停自动续载并显示手动「加载更多」兜底按钮，点击手动加载或调整筛选会重置计数。
+- 视频卡片（[`src/shared/ui/cards.tsx`](../../src/shared/ui/cards.tsx) 的 `WaterfallCard` 与 `RowCard`）在海报左上角按「原创」「热播」「新片」（`new_at` 72 小时窗口）顺序显示角标，与右上角评分保持间距不遮挡；集数状态移至海报底部遮罩左侧（与播放量同排），保留「我的」页 `MediaCard` 的「新更 N 集」单角标展示。
 - 标准版「我的」收藏与观看历史保持原有网格列数；滚动容器接近底部哨兵（提前 300px）时
   每次扩展 12 项，不再显示「加载更多」按钮。
 - 标准版「我的 → 收藏 → 短剧」重新激活时，按已展现的列表范围后台刷新详情，每批最多 6 部。
@@ -135,8 +138,8 @@ pnpm test:post-flicker
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-`test:smoke` 当前包含 `api-loading`、`storage-migration`、`line-selection`、
-`diagnostic-copy`、`ui-feedback`、`home-controls`、`account-sync`（最后运行）。账号切换期间批量取消收藏的
+`test:smoke` 当前包含 `api-loading`、`channel-autoload-badges`、`storage-migration`、`line-selection`、
+`diagnostic-copy`、`ui-feedback`、`home-controls`、`account-sync` 与 `i18n`。账号切换期间批量取消收藏的
 fixture 位于 `scripts/test-account-sync-empty-state.mjs`；需要单独运行时可执行
 `node scripts/test-account-sync-empty-state.mjs`。浏览器 fixture 使用 mock Tauri IPC 且阻断外部请求，
 不能证明真实上游的正文结构或账号接口；真实接口变化需要另加网络隔离的 fixture 或手动验证。
