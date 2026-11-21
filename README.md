@@ -9,7 +9,7 @@
 Windows / macOS / Linux / Android / iOS · iOS 圆角与玻璃材质 · 沉浸式竖屏播放
 **+ HarmonyOS（本分支移植，产出 HAP）**
 
-当前版本 **v2.0.0** · [Releases 下载与更新说明](https://github.com/ches2010/HGhub_ohs/releases)
+当前版本 **v2.2.5** · [Releases 下载与更新说明](https://github.com/ches2010/HGhub_ohs/releases) · [鸿蒙端更新日志](CHANGELOG-harmony.md)
 
 </div>
 
@@ -87,15 +87,21 @@ hdc install -r entry/build/default/outputs/default/entry-default-signed.hap
 - 补丁层（`harmony/patches/src/hg-bridge/*.ts`）在基线 commit `bebfb7a` 上 `tsc --noEmit` **零错误**
 - 线路模块 25 项断言、更新检查 21 项断言、热搜解析 6 用例 + 7 个 href 边界、返回键链路、线路/诊断端到端
   —— 均以 Node + 假上游跑过，用例取自上游 Rust 单测的原始样本
-- **ArkTS（`.ets`）尚未编译**：`TCPSocketServer`、`connection.getNetCapabilities`、
-  `moveAbilityToBackground` 这些 API 需在 DevEco 里按你的 SDK 版本过一遍
+- **ArkTS 已通过 command-line-tools 构建验证**：HAP 已生成、签名并安装到真机；CI 中仍只构建前端产物，ArkTS 编译依赖本机 HarmonyOS SDK
 
 细节见 [`harmony/docs/PORTING.md`](harmony/docs/PORTING.md)（真机自检顺序、已知风险都在里面）。
 
+### 当前鸿蒙构建
+
+- 版本：`v2.2.5`
+- 最新 Release：[`v2.2.5-harmony`](https://github.com/ches2010/HGhub_ohs/releases/tag/v2.2.5-harmony)
+- 资产：`HGhub_ohs-harmony-unsigned.hap`
+- 更新日志：[`CHANGELOG-harmony.md`](CHANGELOG-harmony.md)
+
 ### 源码基线
 
-上游 `zxsos/HGhubX` `main` @ `bebfb7a3385d8fde7918e6992692ec7b3b48489f`（v2.0.0）。
-补丁靠"原文锚点"定位，上游改版会让 `apply-patch.mjs` **报错停下**（不会静默改错位置）。
+上游 `zxsos/HGhubX` `main` @ `24e1b9c5c7d0dc26e950bfd6baad954319eb39d2`（v2.2.5）。
+本仓库 `main` 已包含上游 v2.2.5 同步与鸿蒙适配；补丁靠"原文锚点"定位，上游继续改版时 `apply-patch.mjs` 仍会**报错停下**（不会静默改错位置）。
 
 
 > ⚠️ 免责声明：本项目仅供 **学习与技术交流**，不提供、不存储、不分发任何音视频内容，与任何内容提供方无关联。
