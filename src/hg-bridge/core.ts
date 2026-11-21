@@ -46,6 +46,33 @@ interface Pending {
 const pending = new Map<string, Pending>();
 let seq = 0;
 
+/**
+ * 复刻 Tauri v2 的 Channel：上游 TV 更新器会用它把下载进度回传给前端。
+ * 真正的 Tauri 环境走 __TAURI_INTERNALS__.transformCallback；
+ * 鸿蒙桥没有这个注册表，先保留回调并序列化为占位通道（TV 更新命令本身未移植）。
+ */
+export class Channel<T = unknown> {
+  readonly id: number;
+
+  constructor(callback: (response: T) => void) {
+    const internals = (window as unknown as {
+      __TAURI_INTERNALS__?: {
+        transformCallback?: (callback: (...args: unknown[]) => unknown) => number;
+      };
+    }).__TAURI_INTERNALS__;
+    if (typeof internals?.transformCallback === "function") {
+      this.id = internals.transformCallback(callback as (...args: unknown[]) => unknown);
+    } else {
+      this.id = 0;
+      (this as unknown as { __hgCallback?: (response: T) => void }).__hgCallback = callback;
+    }
+  }
+
+  toJSON(): string {
+    return `__CHANNEL__:${this.id}`;
+  }
+}
+
 /* ── 硬件返回键（鸿蒙 UIAbility.onBackPressed → window.__hgBackEvent） ── */
 type BackListener = () => void;
 const backListeners = new Set<BackListener>();
