@@ -1043,6 +1043,7 @@ export async function invoke<T = Json>(cmd: string, args: Record<string, Json> =
         /* 桥未注入时仍返回明确的“无可清理 Web 缓存”结果 */
       }
       return { webCache: false, platform: "harmonyos" } as T;
+    case "plugin:app|background":
     case "plugin:app|exit":
       // App.tsx 返回链的末端。鸿蒙版按系统习惯「退到后台」而不是杀进程：
       // ArkTS 侧 background() → UIAbilityContext.moveAbilityToBackground()

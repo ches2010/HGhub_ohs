@@ -2,7 +2,7 @@ import { LiquidIndicator, Loader } from "../shared/ui/ios/effects";
 import { Button } from "../shared/ui/ios/controls";
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useStore, type Page, type Tab } from "../shared/model/store";
-import { isMobile, selfTest } from "../shared/api/api";
+import { isHarmony, isMobile, selfTest } from "../shared/api/api";
 import { addPluginListener, invoke } from "@tauri-apps/api/core";
 import { runBack } from "../shared/lib/back";
 import { exitDocumentFullscreen, getFullscreenElement } from "../shared/lib/fullscreen";
@@ -316,9 +316,9 @@ export default function App() {
     };
   }, [platform]);
 
-  /* —— 安卓硬件返回键 ——
-     层级：面板/弹层 → 全屏 → 登录框 → 页面栈 → 回首页 → 退出应用。
-     不注册这个监听，Tauri 会直接 webView.goBack() 或退出，表现就是「任意页面返回都回桌面」。 */
+  /* —— 移动端硬件返回键 ——
+     层级：面板/弹层 → 全屏 → 登录框 → 页面栈 → 回首页 → 退到后台。
+     每次只返回一级；鸿蒙版到首页后不再退出应用，而是移动到后台。 */
   const backRef = useRef<() => void>(() => {});
   backRef.current = () => {
     if (runBack()) return;                                  // 最上层弹窗/播放器面板
@@ -327,7 +327,8 @@ export default function App() {
     if (loginOpen) { setLoginOpen(false); return; }
     if (stack.length) { pop(); return; }
     if (tab !== "home") { setTab("home"); return; }
-    invoke("plugin:app|exit", { code: 0 }).catch(() => {});
+    if (isHarmony) invoke("plugin:app|background").catch(() => {});
+    else invoke("plugin:app|exit", { code: 0 }).catch(() => {});
   };
 
   useEffect(() => {
