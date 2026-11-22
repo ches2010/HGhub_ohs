@@ -49,7 +49,7 @@ export default class EntryAbility extends UIAbility {
     });
   }
 
-  /** 硬件返回键：未由页面消费时也返回 true，让系统退到后台而不是销毁 Ability。 */
+  /** Ability 级兜底：页面级 onBackPress 未命中时也不销毁 Ability。 */
   onBackPressed(): boolean {
     const bridge = getSharedBridge();
     return bridge !== null ? bridge.handleBack() : true;

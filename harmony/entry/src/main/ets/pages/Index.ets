@@ -76,6 +76,19 @@ struct Index {
     });
   }
 
+  /**
+   * 页面级返回拦截：侧滑/返回键先进入这里，再交给 Web 层逐级返回。
+   * 不能只依赖 UIAbility.onBackPressed——那个层级返回 true 的语义是
+   * 「Ability 移到后台」，会表现为返回手势直接退出前台。
+   */
+  onBackPress(): boolean {
+    const bridge = this.bridge;
+    if (bridge === null) {
+      return true;
+    }
+    return bridge.handleBack();
+  }
+
   /** 显式 loadUrl；控制器还没 attach 时退回改 @State */
   private loadTarget(url: string): void {
     this.activeLoadUrl = url;

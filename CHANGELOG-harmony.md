@@ -26,6 +26,7 @@
 - 全面屏适配：窗口启用沉浸式全屏布局，状态栏与导航条透明，消除播放页竖屏/横屏上下白边；ArkWeb 继续用 `viewport-fit=cover` 和 safe-area 避让关键控件。
 - 补齐 `hg-bridge` 的 Tauri `Channel` 兼容层，修复上游 TV 更新器导致鸿蒙前端构建失败的问题。
 - 返回键语义优化：每次返回只关闭一层弹层/页面；鸿蒙版回到首页后移动到后台，不退出应用。
+- 修复侧滑返回手势：在 `Index` 页面增加 `onBackPress` 拦截，避免返回手势直接落到 Ability 层而退到后台。
 - 冲突解决：`Profile` 页脚保留鸿蒙身份；`tests/tv-remote-fixture.mjs` 同时保留 Tauri callback id 与上游 update/download fixture 能力。
 
 ---
