@@ -27,7 +27,7 @@ ad-hoc 签名都不应进入仓库或本机脚本输出。
   - 标准版 CD：[`.github/workflows/release.yml`](../../.github/workflows/release.yml)（名称 `Release`），先执行 `preflight`（版本号格式、`check-i18n`、`check-doc-links` 与发布说明提示），再并行执行 5 平台构建（`windows`、`android`、`macos`、`ios`、`linux`）与 `release`。
   - TV 版 CI：[`.github/workflows/tv.yml`](../../.github/workflows/tv.yml)（名称 `TV CI`），负责 TV 版按路径过滤的构建与遥控器验收（`acceptance`）。
   - TV 版 CD：[`.github/workflows/tv-release.yml`](../../.github/workflows/tv-release.yml)（名称 `TV Release`），先执行 `preflight` 校验 TV 版本号/字典/文档，再执行 `package` 与 `release`（`--latest=false` 不抢占仓库 `Latest` 徽章）。
-  - 测试预览：[`.github/workflows/sync-test-branch.yml`](../../.github/workflows/sync-test-branch.yml)（名称 `Sync Test Branch`）、[`.github/workflows/test-preview.yml`](../../.github/workflows/test-preview.yml)（名称 `Test Preview`）与 [`scripts/sync-test-branch.mjs`](../../scripts/sync-test-branch.mjs)。`Sync Test Branch` 在 PR/推送 `main` 时仅执行约 15 秒的标签门禁与 `test` 分支合流（`cancel-in-progress: false`，绝不互杀污染 PR 状态；Draft 草稿不提前贴标，纯文档/工作流 PR 自动跳过，拦截外部 PR 修改 `.github/`）；`Test Preview` 通过 `workflow_run` 异步承接 6 平台隔离编译（无密钥）与独立干净运行器 APK 签名，支持手动按单平台重编并原地零 404 空窗滚动更新 `test-pre` Pre-release（`--latest=false`）。
+  - 测试预览：[`.github/workflows/sync-test-branch.yml`](../../.github/workflows/sync-test-branch.yml)（名称 `Sync Test Branch`）、[`.github/workflows/test-preview.yml`](../../.github/workflows/test-preview.yml)（名称 `Test Preview`）与 [`scripts/sync-test-branch.mjs`](../../scripts/sync-test-branch.mjs)。`Sync Test Branch` 在 PR/推送 `main` 时仅执行约 15 秒的标签门禁与 `test` 分支合流（`cancel-in-progress: false`，绝不互杀污染 PR 状态；Draft 草稿不提前贴标，纯文档/工作流 PR 自动跳过，拦截外部 PR 修改 `.github/`）；`Test Preview` 通过 `workflow_run` 异步承接 6 平台隔离编译（无密钥）与独立干净运行器 APK 签名，支持手动按单平台重编并原地零 404 空窗滚动更新 `test-pre` Pre-release（`--latest=false`）。`Test Preview` 将 `concurrency` 下沉至各平台构建 job（`cancel-in-progress: true`）与发布 job（`cancel-in-progress: false`），`should_build=false` 的空跑不会取消进行中的构建；`sync-test-branch.mjs` 还会比对 `refs/tags/test-pre` 的树及活跃的 `Test Preview` 运行，在不打断运行中构建的前提下自动补建未发布的 `test` 提交。
 - 版本/预算门禁：[`scripts/set-version.mjs`](../../scripts/set-version.mjs)（支持 `--target standard|tv`）、
   [`scripts/check-version-sync.mjs`](../../scripts/check-version-sync.mjs)（支持 `--target all|standard|tv`）、
   [`scripts/check-doc-links.mjs`](../../scripts/check-doc-links.mjs)、
@@ -37,7 +37,7 @@ ad-hoc 签名都不应进入仓库或本机脚本输出。
   [`scripts/build-android-tv.mjs`](../../scripts/build-android-tv.mjs)（含 `--android-init` / `--android-build` 临时覆盖与自动清理）、
   [`scripts/patch-android-tv.mjs`](../../scripts/patch-android-tv.mjs)；图标/启动屏：
   `generate-ios-icons.mjs`、`sync-ios-icons.mjs`、`patch-ios-splash.mjs`、
-  `sync-android-icons.mjs`、`patch-android-splash.mjs`。
+  `sync-android-icons.mjs`（同步 `src-tauri/icons/android/` 含 Android 13+ Material You 单色自适应图层 `drawable/ic_launcher_monochrome.xml` 与 `mipmap-anydpi-v26/ic_launcher*.xml`）、`patch-android-splash.mjs`。
 - 本地入口：[`Makefile`](../../Makefile) 的 `check`、`test-rust`、`test-web`、`test-tv`、`test-smoke`、
   `docs`、`budget`、`release-check`。
 

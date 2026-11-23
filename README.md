@@ -9,7 +9,7 @@
 Windows / macOS / Linux / Android / iOS · iOS 圆角与玻璃材质 · 沉浸式竖屏播放
 **+ HarmonyOS（本分支移植，产出 HAP）**
 
-当前版本 **v2.2.6** · [Releases 下载与更新说明](https://github.com/ches2010/HGhub_ohs/releases) · [鸿蒙端更新日志](CHANGELOG-harmony.md)
+当前版本 **v2.2.8** · [Releases 下载与更新说明](https://github.com/ches2010/HGhub_ohs/releases) · [鸿蒙端更新日志](CHANGELOG-harmony.md)
 
 </div>
 
