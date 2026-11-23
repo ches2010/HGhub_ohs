@@ -24,6 +24,7 @@
   - 版本更新至 `2.2.8`
 - 鸿蒙版本对齐 `2.2.8`；`App.tsx` 合并上游 `PageCoveredContext` 与鸿蒙返回键/身份逻辑；`api.ts`、i18n 保留鸿蒙分支。
 - 冲突解决：仅 `App.tsx` 存在导入区冲突，合并后同时保留 `PageCoveredContext` 与 `isHarmony`。
+- 验证：主工程/Node/测试三套 `tsc` 通过；i18n 800 keys、文档 200 links、体积预算与版本同步通过；`Harmony web bundle` 已成功重建 `www` 与压缩包。
 
 ---
 ---
