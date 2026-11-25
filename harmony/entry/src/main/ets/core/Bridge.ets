@@ -17,6 +17,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { util } from '@kit.ArkTS';
 import { connection } from '@kit.NetworkKit';
 import { httpRequest } from './Http';
+import { PlaybackLog } from './PlaybackLog';
 
 const TAG: string = 'HGhubX';
 
@@ -48,9 +49,11 @@ export class Bridge {
   private backEnabled: boolean = false;
   /** 页面是否已加载完成，未完成时不要吞返回键 */
   private pageReady: boolean = false;
+  private playbackLog: PlaybackLog;
 
   constructor(context: common.UIAbilityContext) {
     this.context = context;
+    this.playbackLog = new PlaybackLog(context.filesDir);
   }
 
   attach(controller: webview.WebviewController): void {
@@ -112,8 +115,33 @@ export class Bridge {
     });
   }
 
+  private redactText(msg: string): string {
+    return msg
+      .replace(/(authorization|cookie|set-cookie)\s*:\s*[^\r\n;]+/gi, '$1: [redacted]')
+      .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [redacted]')
+      .replace(/(token|password|secret|access_key|refresh_token)\s*=\s*[^&\s]+/gi, '$1=[redacted]');
+  }
+
   log(msg: string): void {
-    hilog.info(0x0000, TAG, '%{public}s', msg);
+    hilog.info(0x0000, TAG, '%{public}s', this.redactText(msg));
+  }
+
+  playbackLogStatus(reqId: string): void {
+    this.reply(reqId, true, JSON.stringify(this.playbackLog.status()));
+  }
+
+  playbackLogSet(reqId: string, enabled: boolean): void {
+    this.reply(reqId, true, JSON.stringify(this.playbackLog.setEnabled(enabled)));
+  }
+
+  playbackLogAppend(reqId: string, linesJson: string): void {
+    this.playbackLog.appendLines(linesJson);
+    this.reply(reqId, true, 'null');
+  }
+
+  playbackLogRead(reqId: string): void {
+    const text = this.playbackLog.export(this.currentBase());
+    this.reply(reqId, true, JSON.stringify(text));
   }
 
   setBackEnabled(enabled: boolean): void {

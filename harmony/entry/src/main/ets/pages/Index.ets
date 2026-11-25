@@ -214,7 +214,8 @@ struct Index {
           this.controller.registerJavaScriptProxy(
             bridge,
             'hghub',
-            ['http', 'setBase', 'openUrl', 'setOrientation', 'log', 'clearCache', 'setBackEnabled', 'background', 'netInfo']
+            ['http', 'setBase', 'openUrl', 'setOrientation', 'log', 'clearCache', 'setBackEnabled', 'background', 'netInfo',
+            'playbackLogStatus', 'playbackLogSet', 'playbackLogAppend', 'playbackLogRead']
           );
           // 服务可能已经起来了：attach 之后补一次加载
           if (this.targetUrl.length > 0 && !this.pageLoaded) {

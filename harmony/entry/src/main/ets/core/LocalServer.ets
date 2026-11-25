@@ -483,9 +483,21 @@ export class LocalServer {
         const hasStart = startText.length > 0;
         const hasEnd = endText.length > 0;
         const start = hasStart ? Number(startText) : 0;
-        const end = hasEnd ? Number(endText) : total - 1;
+        let end = hasEnd ? Number(endText) : total - 1;
         const valid = (!hasStart || (/^\d+$/.test(startText) && Number.isSafeInteger(start) && start >= 0))
           && (!hasEnd || (/^\d+$/.test(endText) && Number.isSafeInteger(end) && end >= 0));
+        // HTTP suffix ranges (`bytes=-500`) mean the final 500 bytes, not the first 500.
+        if (valid && !hasStart && hasEnd) {
+          const suffix = Number(endText);
+          if (suffix === 0) {
+            await this.send(client, 416, 'Range Not Satisfiable', 'text/plain', encodeText('range'), [
+              `Content-Range: bytes */${total}`
+            ]);
+            return;
+          }
+          start = suffix >= total ? 0 : total - suffix;
+          end = total - 1;
+        }
         if (valid && hasStart && start >= total) {
           await this.send(client, 416, 'Range Not Satisfiable', 'text/plain', encodeText('range'), [
             `Content-Range: bytes */${total}`

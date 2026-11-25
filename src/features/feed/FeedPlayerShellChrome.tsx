@@ -10,7 +10,6 @@ import type { FeedMeta } from "./useFeedActions";
 import type { FeedPanel } from "./useFeedViewport";
 import { PlaybackSettingsPanel } from "./PlaybackSettingsPanel";
 import { PanelSwipeArea } from "./PanelSwipeArea";
-import { HOLD_SPEED_STEPS } from "./mobileHold";
 import {
   IBoltF, IClose, ICompress, IPauseF, IPlayF, ISearch,
 } from "../../shared/ui/icons";
@@ -45,7 +44,6 @@ type Props = {
   rate: number;
   setRate: Dispatch<SetStateAction<number>>;
   effRate: number;
-  holdRate?: number;
   muted: boolean;
   setMuted: Dispatch<SetStateAction<boolean>>;
   volume: number;
@@ -95,7 +93,7 @@ type Props = {
 export function FeedPlayerShellChrome({
   videoRef, barRef, playbackClock,
   isDesktop, active, fs, idle, rotated, vpLandscape, theater, setTheater, fullscreen, controlsLocked,
-  paused, duration, rate, setRate, effRate, holdRate = 0,
+  paused, duration, rate, setRate, effRate,
   muted, setMuted, volume, setVolume, swipeEp, setSwipeEp, preferHevc, setPreferHevc, portraitFit, setPortraitFit,
   playKey, curId, curEp, index, effectiveLength, kind, meta, likeCount, collectCount, episodes, related,
   follows, followPending, post, articleHtml, panel, setPanel,
@@ -156,33 +154,6 @@ export function FeedPlayerShellChrome({
             go(1);
           }}
         />
-      )}
-
-      {/* 移动端长按临时倍速指示条（仿 Telegram 顶部平滑胶囊，松手即恢复） */}
-      {!isDesktop && active && holdRate > 0 && (
-        <div
-          role="status"
-          aria-live="polite"
-          data-hold-speed-pill
-          className="mobile-hold-speed-pill"
-          style={{ top: rotated ? 18 : "calc(var(--sat, 0px) + 18px)" }}>
-          <span className="mobile-hold-speed-value">{holdRate}×</span>
-          {holdRate > 1 ? (
-            <>
-              <span className="mobile-hold-speed-chevrons" aria-hidden="true">
-                <span /><span />
-              </span>
-              <span className="mobile-hold-speed-steps" aria-hidden="true">
-                {HOLD_SPEED_STEPS.map(step => (
-                  <span key={step} data-active={step === holdRate || undefined} />
-                ))}
-              </span>
-              <span className="mobile-hold-speed-hint">{tr("左右滑调速")}</span>
-            </>
-          ) : (
-            <span className="mobile-hold-speed-hint">{tr("慢速播放")}</span>
-          )}
-        </div>
       )}
 
       {/* 移动端全屏进度条（横竖屏统一在底部突出显示，闲置隐藏时横拖画面自动唤起底部条） */}

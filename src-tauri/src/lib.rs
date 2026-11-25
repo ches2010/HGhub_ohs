@@ -2,7 +2,6 @@ mod api;
 mod apple_proxy;
 mod cache;
 mod channel_page;
-mod edge_crypto;
 mod env;
 #[cfg(target_os = "ios")]
 mod ios_layout;
@@ -255,7 +254,6 @@ pub fn run() {
             api::feed::api_topics,
             api::feed::api_topic,
             api::feed::api_tags,
-            api::feed::api_hot_tags,
             api::feed::api_tag_videos,
             api::feed::api_post_tag,
             api::feed::api_category,

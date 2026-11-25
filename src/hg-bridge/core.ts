@@ -45,6 +45,7 @@ interface Pending {
 
 const pending = new Map<string, Pending>();
 let seq = 0;
+let playbackSeq = 0;
 
 /**
  * 复刻 Tauri v2 的 Channel：上游 TV 更新器会用它把下载进度回传给前端。
@@ -705,6 +706,54 @@ function normalizeAccount(value: Json, origin: string): Json {
   return account;
 }
 
+const PLAYBACK_SECRET_KEYS = [
+  "url", "src", "token", "password", "cookie", "authorization", "body", "message", "reason",
+] as const;
+
+function scrubPlaybackValue(value: Json, depth = 0): Json {
+  if (depth > 5 || value === null) return null;
+  if (typeof value === "string") {
+    const lower = value.toLowerCase();
+    if (value.includes("://") || lower.includes("%3a")) return "[redacted]";
+    return value.slice(0, 160);
+  }
+  if (Array.isArray(value)) return value.slice(0, 24).map((item: Json) => scrubPlaybackValue(item, depth + 1));
+  if (typeof value === "object") {
+    const out: Record<string, Json> = {};
+    for (const [key, item] of Object.entries(value).slice(0, 64)) {
+      const lower = key.toLowerCase();
+      if (PLAYBACK_SECRET_KEYS.some((secret: string) => lower.includes(secret))) continue;
+      out[key.slice(0, 64)] = scrubPlaybackValue(item, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
+function playbackLine(event: string, data: Json): string {
+  return JSON.stringify({
+    ts: new Date().toISOString(),
+    pid: 0,
+    seq: ++playbackSeq,
+    event,
+    strict: true,
+    data: scrubPlaybackValue(data),
+  });
+}
+
+function playbackEntryLines(entries: Json): string {
+  if (!Array.isArray(entries)) throw "日志批次无效";
+  if (entries.length > 128) throw "日志批次过大";
+  const lines = entries.map((entry: Json) => {
+    if (entry === null || typeof entry !== "object") throw "日志条目无效";
+    const record = entry as Record<string, Json>;
+    const event = String(record.event ?? "");
+    if (event.length > 80 || !/^[A-Za-z0-9._-]+$/.test(event)) throw "日志条目无效";
+    return playbackLine(`web.${event}`, record.data ?? {});
+  });
+  return JSON.stringify(lines);
+}
+
 function notPorted(cmd: string): never {
   throw `该功能尚未移植到鸿蒙版：${cmd}`;
 }
@@ -1056,13 +1105,13 @@ export async function invoke<T = Json>(cmd: string, args: Record<string, Json> =
 
     /* —— 播放诊断日志（桌面端功能，移动端未启用） —— */
     case "playback_log_status":
-      return { enabled: false, path: "" } as T;
+      return (await nativeInvoke("playbackLogStatus")) as T;
     case "playback_log_set":
-      return false as T;
+      return (await nativeInvoke("playbackLogSet", !!a.enabled)) as T;
     case "playback_log_write":
-      return null as T;
+      return (await nativeInvoke("playbackLogAppend", playbackEntryLines(a.entries ?? null))) as T;
     case "playback_log_read":
-      return "" as T;
+      return (await nativeInvoke("playbackLogRead")) as T;
 
     default:
       return notPorted(cmd);

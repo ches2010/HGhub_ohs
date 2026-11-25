@@ -141,3 +141,7 @@ iOS WKWebView、Android WebView、Linux GStreamer 的实机矩阵。`test:ios-na
 `tv` 场景入口是 `scripts/test-tv-remote.mjs`（mock Tauri IPC、真实 TV bootstrap）。视口 resize 后
 必须等焦点提交并断言 `activeElement` 命中目标控件（未命中重试一次），再读焦点派生样式；
 不得在与 resize 同一次 evaluate 里同步断言 `:focus` 样式。
+
+### HarmonyOS diagnostics
+
+The HarmonyOS shell mirrors the desktop playback diagnostics contract. `src/hg-bridge/core.ts` sanitizes `playback_log_*` entries before handing JSONL lines to `PlaybackLog.ets`; the ArkTS journal stores the bounded log in the app sandbox, rotates at 2 MiB, and exports at most 256 KiB. The native `debug_log` bridge is redacted before hilog.

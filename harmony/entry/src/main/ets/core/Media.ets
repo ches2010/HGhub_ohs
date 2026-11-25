@@ -99,7 +99,39 @@ export function stripPadding(buf: Uint8Array): Uint8Array {
   return ok ? buf.subarray(0, buf.byteLength - pad) : buf;
 }
 
-/** 把 m3u8 里的相对地址绝对化（不引 URL 库，按协议/主机/目录三段拼）。 */
+function splitUrlSuffix(value: string): [string, string] {
+  let cut = value.length;
+  const query = value.indexOf('?');
+  if (query >= 0) cut = Math.min(cut, query);
+  const hash = value.indexOf('#');
+  if (hash >= 0) cut = Math.min(cut, hash);
+  return [value.substring(0, cut), value.substring(cut)];
+}
+
+function normalizePathSegments(path: string): string {
+  const parts = path.split('/');
+  const out: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (i === 0 && part === '') {
+      out.push('');
+      continue;
+    }
+    if (i === parts.length - 1 && part === '') {
+      out.push('');
+      continue;
+    }
+    if (part === '' || part === '.') continue;
+    if (part === '..') {
+      if (out.length > 1 || (out.length === 1 && out[0] !== '')) out.pop();
+      continue;
+    }
+    out.push(part);
+  }
+  return out.join('/');
+}
+
+/** 把 m3u8 里的相对地址绝对化（不引 URL 库，按协议/主机/目录三段拼并归一化 ..）。 */
 export function absoluteUrl(pageUrl: string, target: string): string {
   const t = target.trim();
   if (t.startsWith('http://') || t.startsWith('https://')) {
@@ -109,16 +141,24 @@ export function absoluteUrl(pageUrl: string, target: string): string {
   if (schemeEnd < 0) {
     return t;
   }
-  const pathStart = pageUrl.indexOf('/', schemeEnd + 3);
-  const origin = pathStart < 0 ? pageUrl : pageUrl.substring(0, pathStart);
+  const origin = pageUrl.substring(0, schemeEnd);
   if (t.startsWith('//')) {
-    return pageUrl.substring(0, schemeEnd + 1) + t;
+    return `${origin}:${t}`;
   }
-  if (t.startsWith('/')) {
-    return origin + t;
+  const pathStart = pageUrl.indexOf('/', schemeEnd + 3);
+  const currentPath = pathStart < 0 ? '/' : splitUrlSuffix(pageUrl.substring(pathStart))[0];
+  const [rawPath, suffix] = splitUrlSuffix(t);
+  let path: string;
+  if (t.startsWith('?') || t.startsWith('#')) {
+    return `${origin}${currentPath}${t}`;
   }
-  const dir = pathStart < 0 ? '/' : pageUrl.substring(pathStart, pageUrl.lastIndexOf('/') + 1);
-  return origin + dir + t;
+  if (rawPath.startsWith('/')) {
+    path = normalizePathSegments(rawPath);
+  } else {
+    const dir = currentPath.substring(0, currentPath.lastIndexOf('/') + 1);
+    path = normalizePathSegments(`${dir}${rawPath}`);
+  }
+  return `${origin}${path}${suffix}`;
 }
 
 export function pctEncode(s: string): string {
