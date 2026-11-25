@@ -147,7 +147,9 @@ export function absoluteUrl(pageUrl: string, target: string): string {
   }
   const pathStart = pageUrl.indexOf('/', schemeEnd + 3);
   const currentPath = pathStart < 0 ? '/' : splitUrlSuffix(pageUrl.substring(pathStart))[0];
-  const [rawPath, suffix] = splitUrlSuffix(t);
+  const urlParts = splitUrlSuffix(t);
+  const rawPath = urlParts[0];
+  const suffix = urlParts[1];
   let path: string;
   if (t.startsWith('?') || t.startsWith('#')) {
     return `${origin}${currentPath}${t}`;

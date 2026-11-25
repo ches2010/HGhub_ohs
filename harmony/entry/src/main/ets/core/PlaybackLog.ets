@@ -12,6 +12,30 @@ import { common } from '@kit.AbilityKit';
 const MAX_FILE: number = 2 * 1024 * 1024;
 const MAX_EXPORT: number = 256 * 1024;
 
+interface DiagnosticsEnvData {
+  os: string;
+  line: string;
+}
+
+interface DiagnosticsEnv {
+  ts: string;
+  pid: number;
+  seq: number;
+  event: string;
+  strict: boolean;
+  data: DiagnosticsEnvData;
+}
+
+interface TruncatedData {
+  total_bytes: number;
+  kept_bytes: number;
+}
+
+interface TruncatedNote {
+  event: string;
+  data: TruncatedData;
+}
+
 export interface PlaybackStatus {
   enabled: boolean;
   path: string;
@@ -187,21 +211,21 @@ export class PlaybackLog {
       }
     }
     this.seq += 1;
-    const header = JSON.stringify({
+    const envData: DiagnosticsEnvData = { os: 'HarmonyOS', line: host };
+    const env: DiagnosticsEnv = {
       ts: new Date().toISOString(),
       pid: 0,
       seq: this.seq,
       event: 'diagnostics.env',
       strict: true,
-      data: { os: 'HarmonyOS', line: host }
-    });
+      data: envData
+    };
+    const header = JSON.stringify(env);
     let text = `${header}\n`;
     const total = body.reduce((sum: number, line: string) => sum + line.length + 1, 0);
     if (total > MAX_EXPORT) {
-      const note = JSON.stringify({
-        event: 'log.truncated',
-        data: { total_bytes: total, kept_bytes: MAX_EXPORT }
-      });
+      const truncatedData: TruncatedData = { total_bytes: total, kept_bytes: MAX_EXPORT };
+      const note = JSON.stringify({ event: 'log.truncated', data: truncatedData } as TruncatedNote);
       text += `${note}\n`;
       let used = note.length + 1;
       let start = body.length;

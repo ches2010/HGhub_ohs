@@ -482,7 +482,7 @@ export class LocalServer {
         const endText = dash < 0 ? '' : spec.substring(dash + 1);
         const hasStart = startText.length > 0;
         const hasEnd = endText.length > 0;
-        const start = hasStart ? Number(startText) : 0;
+        let start = hasStart ? Number(startText) : 0;
         let end = hasEnd ? Number(endText) : total - 1;
         const valid = (!hasStart || (/^\d+$/.test(startText) && Number.isSafeInteger(start) && start >= 0))
           && (!hasEnd || (/^\d+$/.test(endText) && Number.isSafeInteger(end) && end >= 0));
