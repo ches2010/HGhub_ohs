@@ -429,6 +429,10 @@ function edgeEndpoint(scope: EdgeScope): string {
   return "/api/user/request";
 }
 
+function edgeScopeName(scope: EdgeScope): string {
+  return scope.toLowerCase();
+}
+
 function edgeIsDigits(value: string): boolean {
   return value.length > 0 && /^\d+$/.test(value);
 }
@@ -599,7 +603,7 @@ async function edgeOpenSession(origin: string, scope: EdgeScope, timeoutMs: numb
     256,
   ));
   const prk = await subtle.importKey("raw", edgeBuffer(shared), "HKDF", false, ["deriveBits"]);
-  const info = `${EDGE_PROTOCOL}\n${scope}\n${site}\n${kid}\n${sid}`;
+  const info = `${EDGE_PROTOCOL}\n${edgeScopeName(scope)}\n${site}\n${kid}\n${sid}`;
   const reqKey = await edgeDeriveKey(prk, salt, info, "req");
   const resKey = await edgeDeriveKey(prk, salt, info, "res");
   const localTime = Math.floor(Date.now() / 1000);
