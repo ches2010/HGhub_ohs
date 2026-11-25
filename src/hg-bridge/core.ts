@@ -711,7 +711,7 @@ async function edgePostJson(
   publicJson: boolean,
   timeoutMs: number,
 ): Promise<EdgeHttpReply> {
-  const headers: Record<string, string> = { Accept: "application/json", Referer: referer };
+  const headers: Record<string, string> = { Accept: "application/json", "Content-Type": "application/json", Referer: referer };
   if (publicJson) headers["X-HG-Public-JSON"] = "1";
   if (token !== null && token.length > 0) headers.Authorization = `Bearer ${token}`;
   const resp = await nativeHttp(url, "POST", headers, JSON.stringify(payload), timeoutMs);
