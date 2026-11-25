@@ -383,6 +383,429 @@ function nativeHttp(
 
 type Method = "GET" | "POST" | "DELETE" | "PUT";
 
+/* ── dx150-edge-v1 加密网关 ─────────────────────────────
+ * 与 src-tauri/src/edge_crypto.rs 对齐：
+ * ECDH P-256 + HKDF-SHA256 + AES-256-GCM。
+ * ArkWeb 的 WebCrypto 在 http://127.0.0.1 下视为安全上下文，可直接使用。
+ */
+
+const EDGE_PROTOCOL = "dx150-edge-v1";
+const EDGE_MAX_SEQUENCE = 16384;
+type EdgeScope = "Public" | "Dynamic" | "Playback" | "User";
+
+interface EdgeSession {
+  info: string;
+  kid: string;
+  sid: string;
+  clockOffset: number;
+  expiresAt: number;
+  sequence: number;
+  reqKey: CryptoKey;
+  resKey: CryptoKey;
+}
+
+interface EdgeHttpReply {
+  status: number;
+  ctype: string;
+  gateway: string;
+  publicJson: boolean;
+  text: string;
+}
+
+class EdgeLegacyFallback extends Error {}
+
+const edgeSessions = new Map<string, Promise<EdgeSession>>();
+
+function edgeSubtle(): SubtleCrypto {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) throw "当前 WebView 不支持 WebCrypto，无法使用加密接口网关";
+  return subtle;
+}
+
+function edgeEndpoint(scope: EdgeScope): string {
+  if (scope === "Public") return "/api/public/request";
+  if (scope === "Dynamic") return "/api/dynamic/request";
+  if (scope === "Playback") return "/api/playback/request";
+  return "/api/user/request";
+}
+
+function edgeIsDigits(value: string): boolean {
+  return value.length > 0 && /^\d+$/.test(value);
+}
+
+function edgeHasRandomSort(query: string): boolean {
+  return Array.from(new URLSearchParams(query).entries()).some(([key, value]) => {
+    const sort = value.trim().toLowerCase();
+    return key === "sort" && (sort === "random" || sort === "rand");
+  });
+}
+
+function edgeScopeFor(method: string, pathWithQuery: string): EdgeScope {
+  const normalizedMethod = method.toUpperCase() === "HEAD" ? "GET" : method.toUpperCase();
+  const [pathname, query] = pathWithQuery.split("?") as [string, string?];
+  const segments = pathname.split("/").filter((segment: string) => segment.length > 0);
+
+  const playbackMatches: boolean =
+    (segments.length === 6 && segments[0] === "api" && segments[1] === "videos" && segments[3] === "episodes" && segments[5] === "playback" && normalizedMethod === "POST" && edgeIsDigits(segments[2]) && edgeIsDigits(segments[4]))
+    || (segments.length === 4 && segments[0] === "api" && segments[1] === "videos" && segments[3] === "playback" && normalizedMethod === "POST" && edgeIsDigits(segments[2]))
+    || (segments.length === 4 && segments[0] === "api" && segments[1] === "videos" && segments[3] === "play" && normalizedMethod === "GET" && edgeIsDigits(segments[2]))
+    || (segments.length === 4 && segments[0] === "api" && segments[1] === "posts" && segments[3] === "playback" && normalizedMethod === "POST" && edgeIsDigits(segments[2]))
+    || (segments.length === 4 && segments[0] === "api" && segments[1] === "media" && segments[2] === "playback" && segments[3] === "previews" && normalizedMethod === "POST")
+    || (segments.length === 5 && segments[0] === "api" && segments[1] === "media" && segments[2] === "prerolls" && segments[4] === "playback" && normalizedMethod === "POST" && edgeIsDigits(segments[3]));
+  if (playbackMatches) return "Playback";
+
+  const userMatches: boolean =
+    (segments.length >= 2 && segments[0] === "api" && segments[1] === "account")
+    || (segments.length >= 3 && segments[0] === "api" && segments[1] === "users" && segments[2] === "me")
+    || (segments.length === 3 && segments[0] === "api" && segments[1] === "videos" && segments[2] === "following" && normalizedMethod === "GET")
+    || (segments.length === 2 && segments[0] === "api" && segments[1] === "ai-wish" && normalizedMethod === "POST")
+    || (segments.length === 4 && segments[0] === "api" && segments[1] === "users" && segments[3] === "follow" && edgeIsDigits(segments[2]))
+    || (segments.length === 4 && segments[0] === "api" && segments[1] === "videos" && edgeIsDigits(segments[2]) && ["like", "collect", "feedback", "rating", "report", "interaction-state"].includes(segments[3]))
+    || (segments.length === 4 && segments[0] === "api" && segments[1] === "videos" && segments[3] === "comments" && normalizedMethod === "POST" && edgeIsDigits(segments[2]))
+    || (segments.length === 5 && segments[0] === "api" && segments[1] === "videos" && segments[3] === "comments" && ["liked", "state"].includes(segments[4]) && edgeIsDigits(segments[2]))
+    || (segments.length === 5 && segments[0] === "api" && segments[1] === "videos" && segments[3] === "comments" && ["like", "guest-like"].includes(segments[4]) && edgeIsDigits(segments[2]) && edgeIsDigits(segments[4]))
+    || (segments.length === 4 && segments[0] === "api" && segments[1] === "videos" && edgeIsDigits(segments[2]) && ["guest-comments", "guest-like", "guest-liked"].includes(segments[3]))
+    || (segments.length === 4 && segments[0] === "api" && segments[1] === "posts" && edgeIsDigits(segments[2]) && ["like", "collect", "visit", "guest-comments", "guest-like", "guest-liked"].includes(segments[3]))
+    || (segments.length === 4 && segments[0] === "api" && segments[1] === "posts" && segments[3] === "comments" && normalizedMethod === "POST" && edgeIsDigits(segments[2]))
+    || (segments.length === 5 && segments[0] === "api" && segments[1] === "posts" && segments[3] === "comments" && segments[4] === "liked" && edgeIsDigits(segments[2]))
+    || (segments.length === 5 && segments[0] === "api" && segments[1] === "posts" && segments[3] === "comments" && ["like", "guest-like"].includes(segments[4]) && edgeIsDigits(segments[2]) && edgeIsDigits(segments[4]));
+  if (userMatches) return "User";
+
+  if (normalizedMethod === "GET") {
+    const two = segments.length === 2 ? segments[1] : "";
+    const three = segments.length === 3 ? segments[2] : "";
+    const four = segments.length === 4 ? segments[3] : "";
+    const publicMatches: boolean =
+      (segments.length === 2 && segments[0] === "api" && ["videos", "topics", "tags", "posts"].includes(segments[1]))
+      || (segments.length === 3 && segments[0] === "api" && segments[1] === "videos" && ["long", "report-reasons"].includes(segments[2]))
+      || (segments.length === 3 && segments[0] === "api" && segments[1] === "feed" && ["post", "today"].includes(segments[2]))
+      || (segments.length === 3 && segments[0] === "api" && segments[1] === "home" && ["latest", "recommends"].includes(segments[2]))
+      || (segments.length === 3 && segments[0] === "api" && segments[1] === "search" && ["hot", "suggest"].includes(segments[2]))
+      || (segments.length === 3 && segments[0] === "api" && segments[1] === "site" && ["categories", "sorts", "config", "links", "menus", "meta", "pages", "transit", "watermark"].includes(segments[2]))
+      || (segments.length === 3 && segments[0] === "api" && ["videos", "posts"].includes(segments[1]) && ["category", "tag"].includes(three))
+      || (segments.length === 3 && segments[0] === "api" && segments[1] === "ranks")
+      || (segments.length === 3 && segments[0] === "api" && segments[1] === "topics")
+      || (segments.length === 4 && segments[0] === "api" && segments[1] === "site" && ["pages"].includes(segments[2]))
+      || (segments.length === 4 && segments[0] === "api" && segments[1] === "videos" && segments[2] === "user" && edgeIsDigits(four))
+      || (segments.length === 4 && segments[0] === "api" && segments[1] === "videos" && segments[3] === "related" && edgeIsDigits(three))
+      || (segments.length === 4 && segments[0] === "api" && segments[1] === "posts" && segments[2] === "user" && edgeIsDigits(four))
+      || (segments.length === 4 && segments[0] === "api" && segments[1] === "posts" && ["adjacent", "related"].includes(segments[3]) && edgeIsDigits(three))
+      || (segments.length === 4 && segments[0] === "api" && segments[1] === "users" && segments[3] === "stats" && edgeIsDigits(three))
+      || (segments.length === 4 && segments[0] === "api" && segments[1] === "search" && segments[2] === "tags" && segments[3] === "hot");
+    if (publicMatches) return edgeHasRandomSort(query ?? "") ? "Dynamic" : "Public";
+  }
+  return "Dynamic";
+}
+
+function edgeSortPublicPath(pathWithQuery: string): string {
+  const parts = pathWithQuery.split("?");
+  if (parts.length !== 2 || parts[1].length === 0) return pathWithQuery;
+  const params = new URLSearchParams(parts[1]);
+  params.sort();
+  const sorted = params.toString();
+  return sorted.length > 0 ? `${parts[0]}?${sorted}` : parts[0];
+}
+
+function edgeValidId(value: string): boolean {
+  return value.length >= 1 && value.length <= 64 && /^[A-Za-z0-9_-]+$/.test(value);
+}
+
+function edgeValidSid(value: string): boolean {
+  return value.length >= 16 && value.length <= 128 && /^[A-Za-z0-9_-]+$/.test(value);
+}
+
+function edgeValidSite(value: string): boolean {
+  return value.length >= 1 && value.length <= 256 && /^[A-Za-z0-9.:\[\]-]+$/.test(value);
+}
+
+function edgeBuffer(bytes: Uint8Array): ArrayBuffer {
+  const out = new Uint8Array(bytes.byteLength);
+  out.set(bytes);
+  return out.buffer as ArrayBuffer;
+}
+
+function edgeBase64UrlEncode(bytes: Uint8Array): string {
+  return bytesToB64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function edgeBase64UrlDecode(value: string): Uint8Array {
+  let normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  while (normalized.length % 4 !== 0) normalized += "=";
+  return b64ToBytes(normalized);
+}
+
+function edgeNonce(sequence: number): Uint8Array {
+  const iv = new Uint8Array(12);
+  new DataView(iv.buffer).setUint32(8, sequence, false);
+  return iv;
+}
+
+function edgeAad(info: string, direction: "req" | "res", sequence: number, ts: number): Uint8Array {
+  return encoder.encode(`${info}\n${direction}\n${sequence}\n${ts}`);
+}
+
+async function edgeDeriveKey(prk: CryptoKey, salt: Uint8Array, info: string, direction: "req" | "res"): Promise<CryptoKey> {
+  const subtle = edgeSubtle();
+  const bits = await subtle.deriveBits(
+    { name: "HKDF", hash: "SHA-256", salt: edgeBuffer(salt), info: edgeBuffer(encoder.encode(`${info}\n${direction}`)) },
+    prk,
+    256,
+  );
+  return subtle.importKey("raw", bits, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+
+async function edgeOpenSession(origin: string, scope: EdgeScope, timeoutMs: number): Promise<EdgeSession> {
+  const subtle = edgeSubtle();
+  const pair = await subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, false, ["deriveBits"]);
+  const clientPub = new Uint8Array(await subtle.exportKey("raw", pair.publicKey));
+  const hello = { v: 1, type: "hello", client_pub: edgeBase64UrlEncode(clientPub) };
+  const url = `${origin}${edgeEndpoint(scope)}`;
+  const reply = await edgePostJson(
+    url,
+    `${origin}/`,
+    hello,
+    null,
+    false,
+    timeoutMs,
+  );
+  if (reply.status === 404 || reply.status === 405) throw new EdgeLegacyFallback("scope not migrated");
+  if (reply.status < 200 || reply.status >= 300) throw new Error(`加密握手返回 HTTP ${reply.status}`);
+
+  let helloData: Record<string, Json>;
+  try {
+    helloData = JSON.parse(reply.text) as Record<string, Json>;
+  } catch {
+    throw new Error("加密握手响应格式无效");
+  }
+  const kid = String(helloData.kid ?? "");
+  const sid = String(helloData.sid ?? "");
+  const site = String(helloData.site ?? "");
+  const serverPubB64 = String(helloData.server_pub ?? "");
+  const saltB64 = String(helloData.salt ?? "");
+  const serverTime = Number(helloData.server_time ?? 0);
+  const expiresAt = Number(helloData.expires_at ?? 0);
+  if (
+    Number(helloData.v) !== 1 || helloData.type !== "hello" || !edgeValidId(kid) || !edgeValidSid(sid)
+    || !edgeValidSite(site) || !Number.isSafeInteger(serverTime) || !Number.isSafeInteger(expiresAt)
+    || expiresAt <= serverTime || expiresAt - serverTime > 600
+  ) throw new Error("加密握手响应参数无效");
+
+  const serverPub = edgeBase64UrlDecode(serverPubB64);
+  const salt = edgeBase64UrlDecode(saltB64);
+  if (serverPub.byteLength !== 65 || salt.byteLength !== 32) throw new Error("加密握手公钥或盐值无效");
+  const shared = new Uint8Array(await subtle.deriveBits(
+    { name: "ECDH", public: await subtle.importKey("raw", edgeBuffer(serverPub), { name: "ECDH", namedCurve: "P-256" }, false, []) },
+    pair.privateKey,
+    256,
+  ));
+  const prk = await subtle.importKey("raw", edgeBuffer(shared), "HKDF", false, ["deriveBits"]);
+  const info = `${EDGE_PROTOCOL}\n${scope}\n${site}\n${kid}\n${sid}`;
+  const reqKey = await edgeDeriveKey(prk, salt, info, "req");
+  const resKey = await edgeDeriveKey(prk, salt, info, "res");
+  const localTime = Math.floor(Date.now() / 1000);
+  return {
+    info,
+    kid,
+    sid,
+    clockOffset: serverTime - localTime,
+    expiresAt: localTime + (expiresAt - serverTime),
+    sequence: 0,
+    reqKey,
+    resKey,
+  };
+}
+
+async function edgeSession(origin: string, scope: EdgeScope, timeoutMs: number): Promise<EdgeSession> {
+  const key = `${origin}\n${scope}`;
+  const existing = edgeSessions.get(key);
+  if (existing) {
+    try {
+      const session = await existing;
+      if (session.expiresAt > Math.floor(Date.now() / 1000) + 5 && session.sequence < EDGE_MAX_SEQUENCE) return session;
+    } catch {
+      /* fallthrough: rebuild below */
+    }
+  }
+  const pending = edgeOpenSession(origin, scope, timeoutMs);
+  edgeSessions.set(key, pending);
+  try {
+    return await pending;
+  } finally {
+    if (edgeSessions.get(key) === pending) edgeSessions.delete(key);
+  }
+}
+
+async function edgeEncrypt(session: EdgeSession, scope: EdgeScope, envelope: Json, token: string | null): Promise<Json> {
+  session.sequence += 1;
+  if (session.sequence > EDGE_MAX_SEQUENCE) throw new Error("session_expired");
+  const ts = Math.floor(Date.now() / 1000) + session.clockOffset;
+  const packet: Record<string, Json> = { request: envelope };
+  if (scope !== "Public" && token !== null && token.length > 0) packet.authorization = `Bearer ${token}`;
+  const subtle = edgeSubtle();
+  const plain = encoder.encode(JSON.stringify(packet));
+  const aad = edgeAad(session.info, "req", session.sequence, ts);
+  const cipher = new Uint8Array(await subtle.encrypt(
+    { name: "AES-GCM", iv: edgeBuffer(edgeNonce(session.sequence)), additionalData: edgeBuffer(aad), tagLength: 128 },
+    session.reqKey,
+    edgeBuffer(plain),
+  ));
+  return {
+    v: 1,
+    type: "call",
+    kid: session.kid,
+    sid: session.sid,
+    seq: session.sequence,
+    ts,
+    ciphertext: edgeBase64UrlEncode(cipher),
+  };
+}
+
+async function edgeDecrypt(session: EdgeSession, method: string, sequence: number, ts: number, text: string): Promise<EdgeHttpReply> {
+  let envelope: Record<string, Json>;
+  try {
+    envelope = JSON.parse(text) as Record<string, Json>;
+  } catch {
+    throw new Error("加密接口响应格式无效");
+  }
+  if (
+    Number(envelope.v) !== 1 || envelope.type !== "result" || String(envelope.kid ?? "") !== session.kid
+    || String(envelope.sid ?? "") !== session.sid || Number(envelope.seq) !== sequence || Number(envelope.ts) !== ts
+  ) throw new Error("加密接口响应不匹配");
+  const cipher = edgeBase64UrlDecode(String(envelope.ciphertext ?? ""));
+  const subtle = edgeSubtle();
+  const plainBuffer = await subtle.decrypt(
+    { name: "AES-GCM", iv: edgeBuffer(edgeNonce(sequence)), additionalData: edgeBuffer(edgeAad(session.info, "res", sequence, ts)), tagLength: 128 },
+    session.resKey,
+    edgeBuffer(cipher),
+  );
+  let inner: { status?: Json; headers?: Record<string, Json>; body?: Json };
+  try {
+    inner = JSON.parse(new TextDecoder().decode(edgeBuffer(new Uint8Array(plainBuffer)))) as { status?: Json; headers?: Record<string, Json>; body?: Json };
+  } catch {
+    throw new Error("加密接口内层响应无效");
+  }
+  const status = Number(inner.status ?? 0);
+  if (status < 200 || status > 599) throw new Error("加密接口内层状态码无效");
+  let contentType = "";
+  const headers = inner.headers;
+  if (headers && typeof headers === "object") {
+    for (const [key, values] of Object.entries(headers)) {
+      if (key.toLowerCase() === "content-type" && Array.isArray(values) && values.length > 0) {
+        contentType = String(values[0]);
+        break;
+      }
+    }
+  }
+  const bodyB64 = String(inner.body ?? "");
+  const body = method.toUpperCase() === "HEAD" || status === 204 || status === 205 || status === 304 || bodyB64.length === 0
+    ? ""
+    : new TextDecoder().decode(b64ToBytes(bodyB64));
+  return { status, ctype: contentType, gateway: "dx150-edge-v1", publicJson: false, text: body };
+}
+
+async function edgePostJson(
+  url: string,
+  referer: string,
+  payload: Json,
+  token: string | null,
+  publicJson: boolean,
+  timeoutMs: number,
+): Promise<EdgeHttpReply> {
+  const headers: Record<string, string> = { Accept: "application/json", Referer: referer };
+  if (publicJson) headers["X-HG-Public-JSON"] = "1";
+  if (token !== null && token.length > 0) headers.Authorization = `Bearer ${token}`;
+  const resp = await nativeHttp(url, "POST", headers, JSON.stringify(payload), timeoutMs);
+  return {
+    status: resp.status,
+    ctype: "",
+    gateway: "other",
+    publicJson: false,
+    text: decoder.decode(resp.bytes),
+  };
+}
+
+function edgeSessionExpired(text: string): boolean {
+  try {
+    const value = JSON.parse(text) as { error?: Json };
+    return value.error === "session_expired";
+  } catch {
+    return false;
+  }
+}
+
+function edgeFallbackToCrypto(status: number, text: string): boolean {
+  if (status !== 400) return false;
+  try {
+    const value = JSON.parse(text) as { error?: Json };
+    return ["invalid_request", "unsupported_version"].includes(String(value.error ?? ""));
+  } catch {
+    return false;
+  }
+}
+
+async function edgeCallEncrypted(
+  origin: string,
+  scope: EdgeScope,
+  method: string,
+  envelope: Json,
+  token: string | null,
+  timeoutMs: number,
+): Promise<EdgeHttpReply> {
+  for (let retry = 0; retry < 2; retry++) {
+    const session = await edgeSession(origin, scope, timeoutMs);
+    let payload: Json;
+    try {
+      payload = await edgeEncrypt(session, scope, envelope, token);
+    } catch (e) {
+      if (e instanceof Error && e.message === "session_expired" && retry === 0) continue;
+      throw e;
+    }
+    const reply = await edgePostJson(`${origin}${edgeEndpoint(scope)}`, `${origin}/`, payload, null, false, timeoutMs);
+    if (reply.status === 404 || reply.status === 405) throw new EdgeLegacyFallback("scope not migrated");
+    if (reply.status < 200 || reply.status >= 300) {
+      if (edgeSessionExpired(reply.text) && retry === 0) continue;
+      throw new Error(`加密网关返回 HTTP ${reply.status}`);
+    }
+    return await edgeDecrypt(session, method, Number(payload.seq), Number(payload.ts), reply.text);
+  }
+  throw new Error("加密会话重建失败");
+}
+
+async function edgeRequest(
+  origin: string,
+  method: string,
+  path: string,
+  envelope: Json,
+  token: string | null,
+  timeoutMs: number,
+): Promise<EdgeHttpReply> {
+  const scope = edgeScopeFor(method, path);
+  const scopeUrl = `${origin}${edgeEndpoint(scope)}`;
+  const legacyUrl = `${origin}/api/edge/request`;
+  const referer = `${origin}/`;
+  if (scope === "Public") {
+    const publicEnvelope: Json = {
+      method,
+      path: edgeSortPublicPath(path),
+      body: envelope.body,
+      content_type: envelope.content_type,
+    };
+    try {
+      const reply = await edgePostJson(scopeUrl, referer, publicEnvelope, null, true, timeoutMs);
+      if (reply.status === 404 || reply.status === 405) throw new EdgeLegacyFallback("scope not migrated");
+      if (reply.status >= 200 && reply.status < 300 || !edgeFallbackToCrypto(reply.status, reply.text)) return reply;
+    } catch (e) {
+      if (!(e instanceof EdgeLegacyFallback)) throw e;
+    }
+  }
+  try {
+    return await edgeCallEncrypted(origin, scope, method, envelope, token, timeoutMs);
+  } catch (e) {
+    if (!(e instanceof EdgeLegacyFallback)) throw e;
+  }
+  return edgePostJson(legacyUrl, referer, envelope, token, false, timeoutMs);
+}
+
 async function edge(method: Method, path: string, body: Json = null, auth = true): Promise<Json> {
   return edgeOn(getBase(), method, path, body, auth ? getToken() : null);
 }
@@ -405,9 +828,9 @@ async function edgeOn(
   const headers: Record<string, string> = { Accept: "application/json", Referer: `${base}/` };
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const resp = await nativeHttp(`${base}/api/edge/request`, "POST", headers, JSON.stringify(envelope), timeoutMs);
+  const resp = await edgeRequest(base, method, path, envelope, token, timeoutMs);
   if (resp.status === 401 || resp.status === 403) throw "401";
-  const text = decoder.decode(resp.bytes);
+  const text = resp.text;
   if (resp.status < 200 || resp.status >= 300) {
     throw `HTTP ${resp.status}: ${text.slice(0, 160)}`;
   }
