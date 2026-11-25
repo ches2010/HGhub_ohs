@@ -965,6 +965,352 @@ export function parseSearchHot(html: string): { video_id: number; title: string;
   return items;
 }
 
+/* ── 官网 SSR 频道/吃瓜页（对应 src-tauri/src/channel_page.rs）─ */
+
+const MAX_CHANNEL_HTML_BYTES = 2 * 1024 * 1024;
+const DEFAULT_SSR_PAGE_SIZE = 39;
+const DEFAULT_LIST_SSR_PAGE_SIZE = 28;
+const DEFAULT_GOSSIP_SSR_PAGE_SIZE = 12;
+const PREVIEW_TRUNCATE_LIMIT = 20;
+
+type SsrPaged = { items: Json[]; pagination: { page: number; pages: number; size: number; total: number } };
+
+async function fetchSiteHtml(path: string): Promise<string> {
+  const base = getBase();
+  const resp = await nativeHttp(`${base}${path}`, "GET", {
+    Accept: "text/html,application/xhtml+xml",
+    Referer: `${base}/`,
+  }, "", 12000);
+  if (resp.status < 200 || resp.status >= 300) {
+    throw `官网页面请求失败（HTTP ${resp.status}）`;
+  }
+  if (resp.bytes.byteLength > MAX_CHANNEL_HTML_BYTES) {
+    throw "官网页面超过 2 MiB 限制";
+  }
+  return decoder.decode(resp.bytes);
+}
+
+function ssrText(element: Element | null | undefined): string {
+  return normText(element?.textContent);
+}
+
+function ssrAttr(element: Element | null | undefined, name: string): string {
+  return (element?.getAttribute(name) ?? "").trim();
+}
+
+function ssrPositiveInt(value: string | null | undefined): number {
+  const parsed = Number((value ?? "").trim());
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function ssrIdFromValue(raw: string | null | undefined): number | null {
+  const value = (raw ?? "").trim();
+  if (!/^\d+$/.test(value)) return null;
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id > 0 && id <= JS_MAX_SAFE_INTEGER ? id : null;
+}
+
+function ssrVideoIdFromHref(href: string): number | null {
+  const match = /^\/video\/(\d+)\/$/.exec(href.trim());
+  return match === null ? null : ssrIdFromValue(match[1]);
+}
+
+function ssrPostIdFromHref(href: string): number | null {
+  let path = href.trim();
+  const absolute = /^https?:\/\/[^/]+(.*)$/.exec(path);
+  if (absolute !== null) path = absolute[1];
+  path = path.split("?")[0].split("#")[0];
+  const match = /^\/archives\/(\d+)\/$/.exec(path);
+  return match === null ? null : ssrIdFromValue(match[1]);
+}
+
+function ssrScore(raw: string): number {
+  const parsed = Number(raw.trim().replace(/分$/, "").trim());
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function ssrFirstUint(raw: string): number {
+  const match = /\d+/.exec(raw);
+  return match === null ? 0 : Number(match[0]);
+}
+
+function ssrEpisode(raw: string): { isFinished: boolean; episodeCount: number; totalEpisodes: number } {
+  const text = normText(raw);
+  if (!text) return { isFinished: false, episodeCount: 0, totalEpisodes: 0 };
+  const isFinished = text.includes("全") || text.includes("完结");
+  const rest = text.includes("更新至") ? text.split("更新至")[1] : text.includes("全") ? text.split("全")[1] : text;
+  const episodeCount = ssrFirstUint(rest ?? "");
+  return { isFinished, episodeCount, totalEpisodes: isFinished ? episodeCount : 0 };
+}
+
+function ssrViews(raw: string): number {
+  const text = raw.trim().replace(/,/g, "");
+  if (!text) return 0;
+  let multiplier = 1;
+  let numeric = text.toLowerCase();
+  if (numeric.endsWith("k") || text.endsWith("千")) { multiplier = 1000; numeric = numeric.slice(0, -1); }
+  else if (numeric.endsWith("w") || text.endsWith("万")) { multiplier = 10000; numeric = numeric.slice(0, -1); }
+  else if (text.endsWith("亿")) { multiplier = 100000000; numeric = numeric.slice(0, -1); }
+  const match = /^\d+(?:\.\d+)?/.exec(numeric);
+  if (match === null) return 0;
+  return Math.round(Number(match[0]) * multiplier);
+}
+
+function ssrCountAfterPrefix(raw: string, prefix: string): number {
+  const after = raw.includes(prefix) ? raw.split(prefix).slice(1).join(prefix) : raw;
+  const digits = (after.match(/\d+/g) ?? []).join("");
+  return digits.length > 0 ? Number(digits) : 0;
+}
+
+function ssrCover(card: Element): string {
+  const img = card.querySelector(".hg-drama-card__cover img");
+  for (const name of ["data-src", "src"]) {
+    const value = ssrAttr(img, name);
+    if (value.length > 0 && !value.includes("cover-placeholder")) return value;
+  }
+  return "";
+}
+
+function ssrDramaCard(card: Element): { id: number; title: string } | null {
+  const id = ssrIdFromValue(ssrAttr(card, "data-track-id"))
+    ?? ssrVideoIdFromHref(ssrAttr(card.querySelector(".hg-drama-card__cover-link"), "href"))
+    ?? ssrVideoIdFromHref(ssrAttr(card.querySelector(".hg-drama-card__title a"), "href"));
+  if (id === null) return null;
+  let title = ssrText(card.querySelector(".hg-drama-card__title"));
+  if (!title) title = normText(ssrAttr(card, "data-track-title"));
+  return title.length > 0 ? { id, title } : null;
+}
+
+function ssrParseDramaGrid(
+  scope: Element,
+  grid: Element,
+  page: number,
+  requestedSize: number,
+  totalHint: number,
+  defaultPageSize: number,
+  emptyError: string,
+): SsrPaged {
+  const safePage = Math.max(1, page);
+  const seen = new Set<number>();
+  const items: Json[] = [];
+  for (const card of Array.from(grid.querySelectorAll(".hg-drama-card"))) {
+    const identity = ssrDramaCard(card);
+    if (identity === null || seen.has(identity.id)) continue;
+    seen.add(identity.id);
+    const episode = ssrEpisode(ssrText(card.querySelector(".hg-drama-card__episode")));
+    const tags: string[] = [];
+    const seenTags = new Set<string>();
+    for (const tag of Array.from(card.querySelectorAll(".hg-drama-card__tags .hg-tag"))) {
+      const name = ssrText(tag);
+      if (name.length > 0 && !seenTags.has(name)) {
+        seenTags.add(name);
+        tags.push(name);
+      }
+    }
+    let isOriginal = 0;
+    let isHot = 0;
+    let newAt: number | null = null;
+    for (const badge of Array.from(card.querySelectorAll(".hg-drama-card__badges .hg-drama-card__badge"))) {
+      const className = ssrAttr(badge, "class");
+      const text = ssrText(badge);
+      if (text === "原创") isOriginal = 1;
+      else if (className.includes("hg-drama-card__badge--hot") || text === "热播") isHot = 1;
+      else if (className.includes("hg-drama-card__badge--new") || text === "新片") {
+        const parsed = ssrPositiveInt(ssrAttr(badge, "data-new-at"));
+        newAt = parsed > 0 ? parsed : 1;
+      }
+    }
+    items.push({
+      id: identity.id,
+      title: identity.title,
+      cover: ssrCover(card),
+      tags,
+      score: ssrScore(ssrText(card.querySelector(".hg-drama-card__score"))),
+      episode_count: episode.episodeCount,
+      total_episodes: episode.totalEpisodes,
+      hot: ssrViews(ssrText(card.querySelector(".hg-drama-card__views"))),
+      like_count: 0,
+      collect_count: 0,
+      comment_count: 0,
+      is_finished: episode.isFinished,
+      is_original: isOriginal,
+      is_hot: isHot,
+      new_at: newAt,
+    });
+  }
+  if (items.length === 0) throw emptyError;
+  const fullPageSize = items.length;
+  let pages = ssrPositiveInt(ssrAttr(scope.querySelector(".hg-pager__jump, [data-hg-pager-jump]"), "data-pages"));
+  if (pages === 0) {
+    for (const link of Array.from(scope.querySelectorAll(".hg-pager a.hg-pager__page, .hg-pager span.hg-pager__page"))) {
+      pages = Math.max(pages, ssrPositiveInt(ssrText(link)));
+    }
+  }
+  const total = Math.max(totalHint, items.length);
+  if (pages === 0) {
+    const perPage = Math.max(fullPageSize, defaultPageSize);
+    pages = Math.max(Math.ceil(total / perPage), safePage);
+  }
+  if (safePage === 1 && requestedSize > 0 && requestedSize < PREVIEW_TRUNCATE_LIMIT) {
+    items.length = Math.min(items.length, requestedSize);
+  }
+  return { items, pagination: { page: safePage, pages: Math.max(pages, safePage), size: items.length, total } };
+}
+
+function ssrParseChannelHtml(html: string, panel: string, page: number, requestedSize: number): SsrPaged {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const section = doc.querySelector("section.hg-channel-page");
+  if (section === null) throw "官网频道页缺少频道主体区域";
+  const grid = section.querySelector(`.hg-card-grid[data-channel-panel="${panel}"]`);
+  if (grid === null) throw `官网频道页缺少 ${panel} 面板`;
+  if (grid.hasAttribute("hidden")) throw `官网频道页 ${panel} 面板处于隐藏状态`;
+  const totalHint = ssrPositiveInt(ssrAttr(grid, "data-panel-total"));
+  return ssrParseDramaGrid(section, grid, page, requestedSize, totalHint, DEFAULT_SSR_PAGE_SIZE, `官网频道页 ${panel} 面板没有可用条目`);
+}
+
+function ssrParseListPageHtml(html: string, page: number, requestedSize: number): SsrPaged {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const section = doc.querySelector("section.hg-list-page");
+  if (section === null) throw "官网列表页缺少主体区域";
+  const grid = section.querySelector(".hg-card-grid");
+  if (grid === null) throw "官网列表页缺少卡片网格";
+  const totalHint = ssrCountAfterPrefix(ssrText(section.querySelector(".hg-page-header__extra")), "共");
+  return ssrParseDramaGrid(section, grid, page, requestedSize, totalHint, DEFAULT_LIST_SSR_PAGE_SIZE, "官网列表页没有可用条目");
+}
+
+function ssrCategoryRoute(cate: string, page: number, sort: string | null | undefined): { path: string; panel: string } | null {
+  if (cate !== "ai-duanju" && cate !== "ai-manju") return null;
+  const safePage = Math.max(1, page);
+  const trimmedSort = (sort ?? "").trim();
+  const route = trimmedSort.length === 0 || trimmedSort === "latest"
+    ? { sub: "", panel: "latest" }
+    : trimmedSort === "hot" || trimmedSort === "hot_window"
+      ? { sub: "hot/", panel: "hot" }
+      : trimmedSort === "random"
+        ? { sub: "random/", panel: "random" }
+        : null;
+  if (route === null) return null;
+  return { path: safePage === 1 ? `/${cate}/${route.sub}` : `/${cate}/${route.sub}${safePage}/`, panel: route.panel };
+}
+
+function ssrListRoute(cate: string, page: number): string | null {
+  const prefix = cate === "newest" ? "/newest/" : cate === "recommend" ? "/recommend/" : null;
+  if (prefix === null) return null;
+  const safePage = Math.max(1, page);
+  return safePage === 1 ? prefix : `${prefix}${safePage}/`;
+}
+
+async function fetchCategorySsr(cate: string, page: number, size: number, sort: string | null | undefined): Promise<SsrPaged> {
+  const safePage = Math.max(1, page);
+  const listPath = ssrListRoute(cate, safePage);
+  if (listPath !== null) {
+    return ssrParseListPageHtml(await fetchSiteHtml(listPath), safePage, size);
+  }
+  const route = ssrCategoryRoute(cate, safePage, sort);
+  if (route === null) throw `不支持的官网频道映射：${cate}`;
+  return ssrParseChannelHtml(await fetchSiteHtml(route.path), route.panel, safePage, size);
+}
+
+function ssrGossipWindow(page: number): { page: number; size: number } {
+  if (page <= 1) return { page: 1, size: 24 };
+  const m = page - 1;
+  for (const d of [3, 4, 5, 6, 7, 8]) {
+    const r = m % d;
+    if (r >= 1 && r <= d - 2) return { page: Math.floor(m / d) + 1, size: 12 * d };
+  }
+  return { page: Math.floor(m / 4) + 1, size: 48 };
+}
+
+function ssrParseGossipPostsHtml(
+  html: string,
+  page: number,
+  requestedSize: number,
+  enrichment: Map<number, Record<string, Json>>,
+): SsrPaged {
+  const safePage = Math.max(1, page);
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const section = doc.querySelector("section.hg-community-page");
+  if (section === null) throw "官网吃瓜页容器缺失";
+  const feed = section.querySelector(".hg-cate-feed");
+  if (feed === null) throw "官网吃瓜页列表缺失";
+  const seen = new Set<number>();
+  const items: Json[] = [];
+  for (const card of Array.from(feed.querySelectorAll("a.hg-cate-feed__card"))) {
+    const id = ssrIdFromValue(ssrAttr(card, "data-track-item-id")) ?? ssrPostIdFromHref(ssrAttr(card, "href"));
+    if (id === null || seen.has(id)) continue;
+    seen.add(id);
+    let title = ssrText(card.querySelector(".hg-cate-feed__title"));
+    if (!title) title = normText(ssrAttr(card, "data-track-item-name"));
+    if (!title) continue;
+    const entry = enrichment.get(id);
+    const entryString = (name: string): string => {
+      const value = entry?.[name];
+      return typeof value === "string" ? normText(value) : "";
+    };
+    const ssrCoverValue = (() => {
+      const img = card.querySelector(".hg-cate-feed__cover img");
+      for (const name of ["data-src", "src"]) {
+        const value = ssrAttr(img, name);
+        if (value.length > 0 && !value.includes("cover-placeholder")) return value;
+      }
+      return "";
+    })();
+    const ssrDesc = ssrText(card.querySelector(".hg-cate-feed__intro"));
+    const statsRaw = ssrText(card.querySelector(".hg-cate-feed__stats span"));
+    const ssrHot = ssrViews(statsRaw.replace(/次阅读|阅读|次浏览|浏览/g, "").trim());
+    const tags: string[] = [];
+    const rawTags = entry?.tags;
+    if (Array.isArray(rawTags)) {
+      for (const tag of rawTags) if (typeof tag === "string" && tag.trim().length > 0) tags.push(normText(tag));
+    }
+    items.push({
+      id,
+      title,
+      cover: ssrCoverValue.length > 0 ? ssrCoverValue : entryString("cover"),
+      desc: ssrDesc.length > 0 ? ssrDesc : entryString("desc"),
+      tags,
+      hot: ssrHot > 0 ? ssrHot : (typeof entry?.hot === "number" ? entry.hot : 0),
+      created_at: entryString("created_at") || ssrText(card.querySelector(".hg-cate-feed__date")),
+      publish_time: entryString("publish_time"),
+    });
+  }
+  if (items.length === 0) throw "官网吃瓜页未解析到有效条目";
+  const fullPageSize = items.length;
+  const total = Math.max(ssrCountAfterPrefix(ssrText(section.querySelector(".hg-section-title")), "共"), items.length);
+  let pages = ssrPositiveInt(ssrAttr(section.querySelector("[data-hg-pager-jump]"), "data-pages"));
+  for (const link of Array.from(section.querySelectorAll("nav.hg-pager .hg-pager__page"))) {
+    pages = Math.max(pages, ssrPositiveInt(ssrText(link)));
+  }
+  if (pages === 0) {
+    const perPage = Math.max(fullPageSize, DEFAULT_GOSSIP_SSR_PAGE_SIZE);
+    pages = Math.max(Math.ceil(total / perPage), safePage);
+  }
+  if (safePage === 1 && requestedSize > 0 && requestedSize < DEFAULT_GOSSIP_SSR_PAGE_SIZE) {
+    items.length = Math.min(items.length, requestedSize);
+  }
+  return { items, pagination: { page: safePage, pages: Math.max(pages, safePage), size: items.length, total } };
+}
+
+async function fetchGossipPostsSsr(page: number, size: number): Promise<SsrPaged> {
+  const safePage = Math.max(1, page);
+  const htmlPath = safePage === 1 ? "/blog/gossip/" : `/blog/gossip/${safePage}/`;
+  const windowInfo = ssrGossipWindow(safePage);
+  const apiPath = `/api/posts/category/remen-chigua?page=${windowInfo.page}&size=${windowInfo.size}&sort=latest`;
+  const [html, jsonData] = await Promise.all([
+    fetchSiteHtml(htmlPath),
+    edge("GET", apiPath).catch(() => null),
+  ]);
+  const enrichment = new Map<number, Record<string, Json>>();
+  if (jsonData !== null && typeof jsonData === "object" && Array.isArray((jsonData as { items?: Json }).items)) {
+    for (const item of (jsonData as { items: Json[] }).items) {
+      if (item !== null && typeof item === "object" && typeof (item as { id?: Json }).id === "number") {
+        enrichment.set((item as { id: number }).id, item as Record<string, Json>);
+      }
+    }
+  }
+  return ssrParseGossipPostsHtml(html, safePage, size, enrichment);
+}
+
 /* ── 更新检查（对应 api.rs::check_update）────────────── */
 
 const REPO = "zxsos/HGhubX";
@@ -1291,11 +1637,21 @@ export async function invoke<T = Json>(cmd: string, args: Record<string, Json> =
       return (await edge("GET", "/api/tags")) as T;
     case "api_tag_videos":
       return (await edge("GET", `/api/videos/tag/${enc(a.tag)}?page=${a.page ?? 1}&size=${a.size ?? 20}`)) as T;
-    case "api_category":
-      return (await edge(
-        "GET",
-        `/api/videos/category/${enc(a.cate)}?page=${a.page ?? 1}&size=${a.size ?? 20}${sortSuffix(a.sort)}`,
-      )) as T;
+    case "api_category": {
+      if (!a.jsonOnly) {
+        try {
+          return await fetchCategorySsr(String(a.cate), Number(a.page ?? 1), Number(a.size ?? 20), typeof a.sort === "string" ? a.sort : null) as T;
+        } catch {
+          /* 官网 SSR 不可用时继续走 JSON 网关 */
+        }
+      }
+      const categoryPath = a.cate === "newest"
+        ? `/api/videos?page=${a.page ?? 1}&size=${a.size ?? 20}&sort=new`
+        : a.cate === "recommend"
+          ? `/api/videos?page=${a.page ?? 1}&size=${a.size ?? 20}&sort=hot`
+          : `/api/videos/category/${enc(a.cate)}?page=${a.page ?? 1}&size=${a.size ?? 20}${sortSuffix(a.sort)}`;
+      return (await edge("GET", categoryPath)) as T;
+    }
     case "api_rank": {
       const kind = a.kind === "recommend" || a.kind === "potential" ? a.kind : "hot";
       return (await edge("GET", `/api/ranks/${kind}`)) as T;
@@ -1332,11 +1688,19 @@ export async function invoke<T = Json>(cmd: string, args: Record<string, Json> =
       )) as T;
     case "api_post_categories":
       return (await edge("GET", "/api/site/categories/post")) as T;
-    case "api_post_category":
+    case "api_post_category": {
+      if (a.route === "remen-chigua" && (a.sort === "latest" || a.sort === "new")) {
+        try {
+          return await fetchGossipPostsSsr(Number(a.page ?? 1), Number(a.size ?? 20)) as T;
+        } catch {
+          /* 吃瓜 SSR 不可用时继续走 JSON 网关 */
+        }
+      }
       return (await edge(
         "GET",
         `/api/posts/category/${enc(a.route)}?page=${a.page ?? 1}&size=${a.size ?? 20}${sortSuffix(a.sort)}`,
       )) as T;
+    }
     case "api_post_tag":
       return (await edge(
         "GET",
