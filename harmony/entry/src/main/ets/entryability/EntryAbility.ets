@@ -3,6 +3,8 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { getSharedBridge } from '../core/Bridge';
+import { httpRequest } from '../core/Http';
+import { util } from '@kit.ArkTS';
 import quickjsSpike from 'libquickjs_spike.so';
 
 const TAG: string = 'HGhubX';
@@ -10,13 +12,40 @@ const TAG: string = 'HGhubX';
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(0x0000, TAG, 'onCreate');
-    hilog.info(0x0000, TAG, 'quickjs test begin');
     try {
       const result: string = quickjsSpike.evaluate('1 + 1');
       hilog.info(0x0000, TAG, 'quickjs eval: %{public}s', result);
     } catch (err) {
       const message: string = err instanceof Error ? err.message : String(err);
       hilog.error(0x0000, TAG, 'quickjs eval failed: %{public}s', message);
+    }
+    this.runQuickJsFetchTest();
+  }
+
+  private runQuickJsFetchTest(): void {
+    const script: string = "const r = host.fetch({ url: 'https://www.baidu.com', method: 'GET' }); r";
+    quickjsSpike.evaluateAsync(script, (id: number, request: string): void => {
+      this.handleHostFetch(id, request);
+    }).then((result: string) => {
+      const head: string = result.length > 120 ? result.substring(0, 120) : result;
+      hilog.info(0x0000, TAG, 'quickjs async: %{public}s', head);
+    }).catch((err: Error) => {
+      hilog.error(0x0000, TAG, 'quickjs async failed: %{public}s', err.message);
+    });
+  }
+
+  private async handleHostFetch(id: number, request: string): Promise<void> {
+    try {
+      const parsed: Record<string, string> = JSON.parse(request) as Record<string, string>;
+      const url: string = parsed.url !== undefined ? parsed.url : '';
+      const method: string = parsed.method !== undefined ? parsed.method : 'GET';
+      const body: string = parsed.body !== undefined ? parsed.body : '';
+      const response = await httpRequest(url, method, '{}', body, false, 15000);
+      const text: string = new util.TextDecoder().decode(new Uint8Array(response.bytes));
+      quickjsSpike.resolveFetch(id, JSON.stringify({ status: response.status, body: text }));
+    } catch (err) {
+      const message: string = err instanceof Error ? err.message : String(err);
+      quickjsSpike.resolveFetch(id, JSON.stringify({ __hostError: message }));
     }
   }
 

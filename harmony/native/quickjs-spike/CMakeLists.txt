@@ -17,12 +17,14 @@ set(QJS_BUILD_WERROR OFF CACHE BOOL "" FORCE)
 
 add_subdirectory("${QUICKJS_SRC}" quickjs)
 
+find_package(Threads REQUIRED)
+
 add_library(quickjs_spike SHARED napi_init.c)
 target_include_directories(quickjs_spike PRIVATE "${QUICKJS_SRC}")
 if(NAPI_LIB)
-  target_link_libraries(quickjs_spike PRIVATE qjs "${NAPI_LIB}")
+  target_link_libraries(quickjs_spike PRIVATE qjs Threads::Threads "${NAPI_LIB}")
 else()
-  target_link_libraries(quickjs_spike PRIVATE qjs libace_napi.z.so)
+  target_link_libraries(quickjs_spike PRIVATE qjs Threads::Threads libace_napi.z.so)
 endif()
 
 set_target_properties(quickjs_spike PROPERTIES
