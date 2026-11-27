@@ -34,6 +34,7 @@ export interface SourceManifest {
   apiVersion: string;
   runtime: SourceRuntime;
   capabilities?: SourceCapabilities;
+  updateUrls?: string[];
 }
 
 export interface SourceDescriptor {
@@ -56,6 +57,20 @@ export interface SourceState {
   activeId: string | null;
   previousId: string | null;
   installed: SourceDescriptor[];
+}
+
+export interface SourceUpdateResult {
+  updated: string;
+  reason: string;
+}
+
+export interface HttpFetchResult {
+  status: number;
+  body: string;
+}
+
+export interface SourceHostError {
+  __hostError: string;
 }
 
 /**
@@ -229,38 +244,44 @@ export class SourceManager {
     });
   }
 
-  checkUpdate(id: string): Record<string, string> {
+  checkUpdate(id: string): SourceUpdateResult {
     if (!this.validId(id)) {
-      return { updated: 'false', reason: 'invalid source id' };
+      const invalid: SourceUpdateResult = { updated: 'false', reason: 'invalid source id' };
+    return invalid;
     }
     const manifestPath = this.packageDir(id) + '/manifest.json';
     if (!this.exists(manifestPath)) {
-      return { updated: 'false', reason: 'source not installed' };
+      const missing: SourceUpdateResult = { updated: 'false', reason: 'source not installed' };
+    return missing;
     }
     const manifest = this.parseManifest(this.readText(manifestPath));
-    const updateUrls = (manifest as Record<string, Object>).updateUrls;
+    const updateUrls = manifest.updateUrls;
     if (updateUrls === undefined || !Array.isArray(updateUrls) || updateUrls.length === 0) {
-      return { updated: 'false', reason: 'no update urls' };
+      const noUrls: SourceUpdateResult = { updated: 'false', reason: 'no update urls' };
+    return noUrls;
     }
-    return { updated: 'false', reason: 'pilot update check disabled' };
+    const disabled: SourceUpdateResult = { updated: 'false', reason: 'pilot update check disabled' };
+    return disabled;
   }
 
   private handleHostFetch(id: number, request: string): void {
-    this.httpFetch(request).then((response: { status: number; body: string }) => {
+    this.httpFetch(request).then((response: HttpFetchResult) => {
       quickjsSpike.resolveFetch(id, JSON.stringify(response));
     }).catch((err: Error) => {
-      quickjsSpike.resolveFetch(id, JSON.stringify({ __hostError: err.message }));
+      const errorResult: SourceHostError = { __hostError: err.message };
+      quickjsSpike.resolveFetch(id, JSON.stringify(errorResult));
     });
   }
 
-  private async httpFetch(request: string): Promise<{ status: number; body: string }> {
+  private async httpFetch(request: string): Promise<HttpFetchResult> {
     const parsed: Record<string, string> = JSON.parse(request) as Record<string, string>;
     const url = parsed.url !== undefined ? parsed.url : '';
     const method = parsed.method !== undefined ? parsed.method : 'GET';
     const body = parsed.body !== undefined ? parsed.body : '';
     const response = await httpRequest(url, method, '{}', body, false, 15000);
     const text = new util.TextDecoder().decode(new Uint8Array(response.bytes));
-    return { status: response.status, body: text };
+    const result: HttpFetchResult = { status: response.status, body: text };
+    return result;
   }
 
   private parseManifest(text: string): SourceManifest {

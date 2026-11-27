@@ -22,6 +22,11 @@ import { SourceManager } from './SourceManager';
 
 const TAG: string = 'HGhubX';
 
+interface SourceTestReply {
+  id: string;
+  result: string;
+}
+
 interface NetInfoSnapshot {
   online: boolean;
   bearerTypes: string[];
@@ -208,7 +213,8 @@ export class Bridge {
   sourceTest(reqId: string, id: string): void {
     this.sourceManager.test(id)
       .then((result: string) => {
-        this.reply(reqId, true, JSON.stringify({ id: id, result: result }));
+        const reply: SourceTestReply = { id: id, result: result };
+      this.reply(reqId, true, JSON.stringify(reply));
       })
       .catch((err: Error) => {
         this.reply(reqId, false, err.message);
