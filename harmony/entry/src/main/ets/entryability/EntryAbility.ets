@@ -3,10 +3,8 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { getSharedBridge } from '../core/Bridge';
-import { httpRequest } from '../core/Http';
-import { util } from '@kit.ArkTS';
 import quickjsSpike from 'libquickjs_spike.so';
-import { SourceManager } from '../core/SourceManager';
+import { SourceManager, DEMO_ID } from '../core/SourceManager';
 
 const TAG: string = 'HGhubX';
 
@@ -21,46 +19,7 @@ export default class EntryAbility extends UIAbility {
       const message: string = err instanceof Error ? err.message : String(err);
       hilog.error(0x0000, TAG, 'quickjs eval failed: %{public}s', message);
     }
-    this.runQuickJsSourceTest();
-  }
-
-  private runQuickJsSourceTest(): void {
-    Promise.all([
-      this.readRawFile('quickjs/demo-offline/manifest.json'),
-      this.readRawFile('quickjs/demo-offline/source.js')
-    ]).then((values: string[]) => {
-      const manifestJson: string = JSON.stringify(JSON.parse(values[0]));
-      const sourceText: string = values[1];
-      const script: string = [
-        "var __manifest = " + manifestJson + ";",
-        "if (__manifest.schemaVersion !== 1 || __manifest.runtime.kind !== 'quickjs' || __manifest.runtime.entry !== 'source.js') { throw new Error('manifest contract failed'); }",
-        "if (!__manifest.capabilities.home || !__manifest.capabilities.detail || !__manifest.capabilities.playback) { throw new Error('manifest capabilities failed'); }",
-        "var module = { exports: {} };",
-        "var exports = module.exports;",
-        sourceText,
-        "var required = ['init', 'home', 'search', 'tags', 'hotTags', 'tagVideos', 'detail', 'playback'];",
-        "for (var i = 0; i < required.length; i++) { if (typeof module.exports[required[i]] !== 'function') { throw new Error('missing source export: ' + required[i]); } }",
-        "var __out = {",
-        "  manifest: { id: __manifest.id, name: __manifest.name, version: __manifest.version, runtime: __manifest.runtime },",
-        "  init: module.exports.init(),",
-        "  home: module.exports.home({ page: 1, size: 2 }),",
-        "  detail: module.exports.detail({ id: 90001 }),",
-        "  playback: module.exports.playback({ id: 90001, ep: 1 })",
-        "};",
-        "JSON.stringify(__out);"
-      ].join("\n");
-      quickjsSpike.evaluateAsync(script, (id: number, request: string): void => {
-        this.handleHostFetch(id, request);
-      }).then((result: string) => {
-        const head: string = result.length > 240 ? result.substring(0, 240) : result;
-        hilog.info(0x0000, TAG, 'quickjs package: %{public}s', head);
-        this.runSourcePilotTest();
-      }).catch((err: Error) => {
-        hilog.error(0x0000, TAG, 'quickjs package failed: %{public}s', err.message);
-      });
-    }).catch((err: Error) => {
-      hilog.error(0x0000, TAG, 'quickjs package read failed: %{public}s', err.message);
-    });
+    this.runSourcePilotTest();
   }
 
   private runSourcePilotTest(): void {
@@ -68,48 +27,22 @@ export default class EntryAbility extends UIAbility {
     manager.importDemo()
       .then(() => {
         hilog.info(0x0000, TAG, 'source pilot state: %{public}s', JSON.stringify(manager.state()));
-        return manager.test('com.hghubx.demo-offline');
+        return manager.test(DEMO_ID);
       })
       .then((result: string) => {
         const head: string = result.length > 160 ? result.substring(0, 160) : result;
         hilog.info(0x0000, TAG, 'source pilot test: %{public}s', head);
-        manager.activate('com.hghubx.demo-offline');
+        manager.activate(DEMO_ID);
         hilog.info(0x0000, TAG, 'source pilot active: %{public}s', JSON.stringify(manager.state()));
+        return manager.hostPilotCheck();
+      })
+      .then((hostResult: string) => {
+        const head: string = hostResult.length > 240 ? hostResult.substring(0, 240) : hostResult;
+        hilog.info(0x0000, TAG, 'source host pilot: %{public}s', head);
       })
       .catch((err: Error) => {
         hilog.error(0x0000, TAG, 'source pilot failed: %{public}s', err.message);
       });
-  }
-
-  private readRawFile(name: string): Promise<string> {
-    return new Promise<string>((resolve, reject) => {
-      this.context.resourceManager.getRawFileContent(name, (err: BusinessError, data: Uint8Array) => {
-        if (err !== undefined && err !== null) {
-          reject(err);
-          return;
-        }
-        try {
-          resolve(new util.TextDecoder().decode(data));
-        } catch (e) {
-          reject(e as Error);
-        }
-      });
-    });
-  }
-
-  private async handleHostFetch(id: number, request: string): Promise<void> {
-    try {
-      const parsed: Record<string, string> = JSON.parse(request) as Record<string, string>;
-      const url: string = parsed.url !== undefined ? parsed.url : '';
-      const method: string = parsed.method !== undefined ? parsed.method : 'GET';
-      const body: string = parsed.body !== undefined ? parsed.body : '';
-      const response = await httpRequest(url, method, '{}', body, false, 15000);
-      const text: string = new util.TextDecoder().decode(new Uint8Array(response.bytes));
-      quickjsSpike.resolveFetch(id, JSON.stringify({ status: response.status, body: text }));
-    } catch (err) {
-      const message: string = err instanceof Error ? err.message : String(err);
-      quickjsSpike.resolveFetch(id, JSON.stringify({ __hostError: message }));
-    }
   }
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
@@ -128,7 +61,6 @@ export default class EntryAbility extends UIAbility {
    */
   private setupImmersiveWindow(windowStage: window.WindowStage): void {
     windowStage.getMainWindow().then((mainWindow: window.Window) => {
-      // 窗口背景跟随应用暗色底，避免页面首帧或透明系统栏后露出白底。
       mainWindow.setWindowBackgroundColor('#071218');
       mainWindow.setWindowLayoutFullScreen(true).then(() => {
         const systemBarProperties: window.SystemBarProperties = {
@@ -145,8 +77,7 @@ export default class EntryAbility extends UIAbility {
           err.code, err.message);
       });
     }).catch((err: BusinessError) => {
-      hilog.warn(0x0000, TAG, 'getMainWindow failed: %{public}d %{public}s',
-        err.code, err.message);
+      hilog.warn(0x0000, TAG, 'getMainWindow failed: %{public}d %{public}s', err.code, err.message);
     });
   }
 

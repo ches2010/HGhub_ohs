@@ -6,9 +6,11 @@
 #include <stdio.h>
 #include <time.h>
 #include <errno.h>
+#include <stdint.h>
 
 #define MAX_PENDING 16
-#define FETCH_TIMEOUT_SEC 20
+#define HOST_TIMEOUT_SEC 20
+#define SOURCE_TIMEOUT_SEC 12
 
 typedef struct {
   int used;
@@ -26,16 +28,18 @@ typedef struct {
 
 typedef struct {
   int id;
-  char *json;
-} FetchPayload;
+  char *request;
+} HostPayload;
 
 typedef struct {
   napi_async_work work;
   napi_deferred deferred;
   napi_threadsafe_function tsfn;
   char *script;
+  char *contextJson;
   char *result;
   char *error;
+  int64_t deadlineMs;
 } EvalWork;
 
 static HostBridge g_bridge;
@@ -72,22 +76,30 @@ static void pending_set_result(int id, const char *result) {
   pthread_mutex_unlock(&g_bridge.mutex);
 }
 
-static char *host_fetch_wait(int id) {
+static int64_t monotonic_ms(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (int64_t)ts.tv_sec * 1000 + (int64_t)ts.tv_nsec / 1000000;
+}
+
+static char *host_call_wait(int id) {
   struct timespec deadline;
   clock_gettime(CLOCK_REALTIME, &deadline);
-  deadline.tv_sec += FETCH_TIMEOUT_SEC;
+  deadline.tv_sec += HOST_TIMEOUT_SEC;
 
   pthread_mutex_lock(&g_bridge.mutex);
   Pending *item = &g_bridge.items[id];
   while (!item->done && !item->cancelled) {
     int rc = pthread_cond_timedwait(&g_bridge.cond, &g_bridge.mutex, &deadline);
-    if (rc == ETIMEDOUT) break;
+    if (rc == ETIMEDOUT) {
+      break;
+    }
   }
   char *result;
   if (item->done && item->result != NULL && !item->cancelled) {
     result = strdup(item->result);
   } else {
-    result = strdup("{\"__hostError\":\"host.fetch timeout\"}");
+    result = strdup("{\"__hostError\":\"host call timeout\"}");
   }
   item->used = 0;
   item->cancelled = 0;
@@ -98,7 +110,7 @@ static char *host_fetch_wait(int id) {
   return result;
 }
 
-static int host_fetch_alloc(void) {
+static int host_call_alloc(void) {
   int id = -1;
   pthread_mutex_lock(&g_bridge.mutex);
   for (int i = 0; i < MAX_PENDING; i++) {
@@ -116,61 +128,89 @@ static int host_fetch_alloc(void) {
   return id;
 }
 
-static JSValue js_host_fetch(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv) {
+static JSValue js_host_call(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv) {
   (void)this_val;
-  if (argc < 1) {
-    return JS_NewString(ctx, "{\"__hostError\":\"host.fetch requires a request object\"}");
+  if (argc < 2) {
+    return JS_NewString(ctx, "{\"__hostError\":\"host call requires op and payload\"}");
   }
-  JSValue json_value = JS_JSONStringify(ctx, argv[0], JS_UNDEFINED, JS_UNDEFINED);
+  const char *op = JS_ToCString(ctx, argv[0]);
+  const char *payload = JS_ToCString(ctx, argv[1]);
+  if (op == NULL || payload == NULL) {
+    if (op != NULL) {
+      JS_FreeCString(ctx, op);
+    }
+    if (payload != NULL) {
+      JS_FreeCString(ctx, payload);
+    }
+    return JS_NewString(ctx, "{\"__hostError\":\"host call arguments must be strings\"}");
+  }
+
+  JSValue request = JS_NewObject(ctx);
+  JS_SetPropertyStr(ctx, request, "op", JS_NewString(ctx, op));
+  JS_SetPropertyStr(ctx, request, "payload", JS_NewString(ctx, payload));
+  JSValue json_value = JS_JSONStringify(ctx, request, JS_UNDEFINED, JS_UNDEFINED);
+  JS_FreeValue(ctx, request);
   if (JS_IsException(json_value)) {
-    JS_FreeValue(ctx, json_value);
-    return JS_NewString(ctx, "{\"__hostError\":\"host.fetch request is not JSON serializable\"}");
+    JS_FreeCString(ctx, op);
+    JS_FreeCString(ctx, payload);
+    return JS_NewString(ctx, "{\"__hostError\":\"host call is not JSON serializable\"}");
   }
   const char *json = JS_ToCString(ctx, json_value);
   JS_FreeValue(ctx, json_value);
   if (json == NULL) {
-    return JS_NewString(ctx, "{\"__hostError\":\"host.fetch request is not a string\"}");
+    JS_FreeCString(ctx, op);
+    JS_FreeCString(ctx, payload);
+    return JS_NewString(ctx, "{\"__hostError\":\"host call JSON stringify failed\"}");
   }
-  int id = host_fetch_alloc();
+
+  int id = host_call_alloc();
   if (id < 0) {
     JS_FreeCString(ctx, json);
-    return JS_NewString(ctx, "{\"__hostError\":\"too many concurrent host.fetch calls\"}");
+    JS_FreeCString(ctx, op);
+    JS_FreeCString(ctx, payload);
+    return JS_NewString(ctx, "{\"__hostError\":\"too many concurrent host calls\"}");
   }
-  FetchPayload *payload = (FetchPayload *)malloc(sizeof(FetchPayload));
-  if (payload == NULL) {
+  HostPayload *data = (HostPayload *)malloc(sizeof(HostPayload));
+  if (data == NULL) {
     JS_FreeCString(ctx, json);
+    JS_FreeCString(ctx, op);
+    JS_FreeCString(ctx, payload);
     pending_set_result(id, "{\"__hostError\":\"out of memory\"}");
-    char *err = host_fetch_wait(id);
+    char *err = host_call_wait(id);
     JSValue out = JS_NewString(ctx, err);
     free(err);
     return out;
   }
-  payload->id = id;
-  payload->json = strdup(json);
+  data->id = id;
+  data->request = strdup(json);
   JS_FreeCString(ctx, json);
+  JS_FreeCString(ctx, op);
+  JS_FreeCString(ctx, payload);
 
-  if (g_bridge.tsfn == NULL || payload->json == NULL) {
-    free(payload->json);
-    free(payload);
-    pending_set_result(id, "{\"__hostError\":\"host.fetch bridge is not ready\"}");
-    char *err = host_fetch_wait(id);
+  if (g_bridge.tsfn == NULL || data->request == NULL) {
+    if (data->request != NULL) {
+      free(data->request);
+    }
+    free(data);
+    pending_set_result(id, "{\"__hostError\":\"host bridge is not ready\"}");
+    char *err = host_call_wait(id);
     JSValue out = JS_NewString(ctx, err);
     free(err);
     return out;
   }
 
-  napi_status status = napi_call_threadsafe_function(g_bridge.tsfn, payload, napi_tsfn_blocking);
+  napi_status status = napi_call_threadsafe_function(g_bridge.tsfn, data, napi_tsfn_blocking);
   if (status != napi_ok) {
-    free(payload->json);
-    free(payload);
-    pending_set_result(id, "{\"__hostError\":\"host.fetch callback unavailable\"}");
-    char *err = host_fetch_wait(id);
+    free(data->request);
+    free(data);
+    pending_set_result(id, "{\"__hostError\":\"host callback unavailable\"}");
+    char *err = host_call_wait(id);
     JSValue out = JS_NewString(ctx, err);
     free(err);
     return out;
   }
 
-  char *result = host_fetch_wait(id);
+  char *result = host_call_wait(id);
   JSValue out = JS_NewString(ctx, result);
   free(result);
   return out;
@@ -178,11 +218,13 @@ static JSValue js_host_fetch(JSContext *ctx, JSValueConst this_val, int argc, JS
 
 static void call_js_cb(napi_env env, napi_value js_callback, void *context, void *data) {
   (void)context;
-  FetchPayload *payload = (FetchPayload *)data;
-  if (payload == NULL) return;
+  HostPayload *payload = (HostPayload *)data;
+  if (payload == NULL) {
+    return;
+  }
   if (env == NULL || js_callback == NULL) {
-    pending_set_result(payload->id, "{\"__hostError\":\"host.fetch callback missing\"}");
-    free(payload->json);
+    pending_set_result(payload->id, "{\"__hostError\":\"host callback missing\"}");
+    free(payload->request);
     free(payload);
     return;
   }
@@ -190,12 +232,12 @@ static void call_js_cb(napi_env env, napi_value js_callback, void *context, void
   napi_value recv;
   napi_get_undefined(env, &recv);
   napi_create_int32(env, payload->id, &argv[0]);
-  napi_create_string_utf8(env, payload->json != NULL ? payload->json : "{}", NAPI_AUTO_LENGTH, &argv[1]);
+  napi_create_string_utf8(env, payload->request != NULL ? payload->request : "{}", NAPI_AUTO_LENGTH, &argv[1]);
   napi_status status = napi_call_function(env, recv, js_callback, 2, argv, NULL);
   if (status != napi_ok) {
-    pending_set_result(payload->id, "{\"__hostError\":\"host.fetch callback failed\"}");
+    pending_set_result(payload->id, "{\"__hostError\":\"host callback failed\"}");
   }
-  free(payload->json);
+  free(payload->request);
   free(payload);
 }
 
@@ -209,12 +251,16 @@ static napi_value EvaluateSync(napi_env env, napi_callback_info info) {
   size_t argc = 1;
   napi_value argv[1] = {0};
   napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
-  if (argc < 1) return MakeString(env, "error: evaluate requires one string argument");
+  if (argc < 1) {
+    return MakeString(env, "error: evaluate requires one string argument");
+  }
 
   size_t length = 0;
   napi_get_value_string_utf8(env, argv[0], NULL, 0, &length);
   char *script = (char *)malloc(length + 1);
-  if (script == NULL) return MakeString(env, "error: out of memory");
+  if (script == NULL) {
+    return MakeString(env, "error: out of memory");
+  }
   napi_get_value_string_utf8(env, argv[0], script, length + 1, &length);
 
   JSRuntime *rt = JS_NewRuntime();
@@ -240,7 +286,9 @@ static napi_value EvaluateSync(napi_env env, napi_callback_info info) {
     result = JS_ToCString(ctx, value);
   }
   napi_value out = MakeString(env, result != NULL ? result : "error: JS_ToCString failed");
-  if (result != NULL) JS_FreeCString(ctx, result);
+  if (result != NULL) {
+    JS_FreeCString(ctx, result);
+  }
   JS_FreeValue(ctx, value);
   JS_FreeContext(ctx);
   JS_FreeRuntime(rt);
@@ -248,10 +296,30 @@ static napi_value EvaluateSync(napi_env env, napi_callback_info info) {
   return out;
 }
 
+static JSValue parse_context_or_empty(JSContext *ctx, const char *text) {
+  JSValue value = JS_ParseJSON(ctx, text != NULL ? text : "{}", text != NULL ? strlen(text) : 2, "<host-context>");
+  if (JS_IsException(value)) {
+    JSValue exception = JS_GetException(ctx);
+    JS_FreeValue(ctx, exception);
+    return JS_NewObject(ctx);
+  }
+  return value;
+}
+
+static int source_interrupt(JSContext *ctx, void *opaque) {
+  (void)ctx;
+  EvalWork *work = (EvalWork *)opaque;
+  if (work == NULL) {
+    return 1;
+  }
+  return monotonic_ms() >= work->deadlineMs ? 1 : 0;
+}
+
 static void ExecuteEval(napi_env env, void *data) {
   (void)env;
   EvalWork *work = (EvalWork *)data;
   g_bridge.tsfn = work->tsfn;
+
   JSRuntime *rt = JS_NewRuntime();
   if (rt == NULL) {
     work->error = strdup("JS_NewRuntime failed");
@@ -265,11 +333,18 @@ static void ExecuteEval(napi_env env, void *data) {
     work->error = strdup("JS_NewContext failed");
     return;
   }
-  JS_SetContextOpaque(ctx, &g_bridge);
+
+  work->deadlineMs = monotonic_ms() + (int64_t)SOURCE_TIMEOUT_SEC * 1000;
+  JS_SetInterruptHandler(rt, source_interrupt, work);
+
   JSValue global = JS_GetGlobalObject(ctx);
-  JSValue host = JS_NewObject(ctx);
-  JS_SetPropertyStr(ctx, host, "fetch", JS_NewCFunction(ctx, js_host_fetch, "fetch", 1));
-  JS_SetPropertyStr(ctx, global, "host", host);
+  JSValue call = JS_NewCFunction(ctx, js_host_call, "__hostCall", 2);
+  JS_SetPropertyStr(ctx, global, "__hostCall", call);
+  JS_FreeValue(ctx, call);
+
+  JSValue context = parse_context_or_empty(ctx, work->contextJson);
+  JS_SetPropertyStr(ctx, global, "__hostContext", context);
+  JS_FreeValue(ctx, context);
   JS_FreeValue(ctx, global);
 
   size_t length = strlen(work->script);
@@ -278,12 +353,16 @@ static void ExecuteEval(napi_env env, void *data) {
     JSValue exception = JS_GetException(ctx);
     const char *text = JS_ToCString(ctx, exception);
     work->error = strdup(text != NULL ? text : "JS_Eval failed");
-    if (text != NULL) JS_FreeCString(ctx, text);
+    if (text != NULL) {
+      JS_FreeCString(ctx, text);
+    }
     JS_FreeValue(ctx, exception);
   } else {
     const char *text = JS_ToCString(ctx, value);
     work->result = strdup(text != NULL ? text : "");
-    if (text != NULL) JS_FreeCString(ctx, text);
+    if (text != NULL) {
+      JS_FreeCString(ctx, text);
+    }
   }
   JS_FreeValue(ctx, value);
   JS_FreeContext(ctx);
@@ -308,23 +387,24 @@ static void CompleteEval(napi_env env, napi_status status, void *data) {
   }
   napi_delete_async_work(env, work->work);
   free(work->script);
+  free(work->contextJson);
   free(work->result);
   free(work->error);
   free(work);
 }
 
 static napi_value EvaluateAsync(napi_env env, napi_callback_info info) {
-  size_t argc = 2;
-  napi_value argv[2] = {0};
+  size_t argc = 3;
+  napi_value argv[3] = {0};
   napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
   if (argc < 2) {
-    napi_throw_type_error(env, NULL, "evaluateAsync(script, onFetch) requires two arguments");
+    napi_throw_type_error(env, NULL, "evaluateAsync(script, onHost, contextJson?) requires two arguments");
     return NULL;
   }
   napi_valuetype callback_type;
   napi_typeof(env, argv[1], &callback_type);
   if (callback_type != napi_function) {
-    napi_throw_type_error(env, NULL, "evaluateAsync onFetch must be a function");
+    napi_throw_type_error(env, NULL, "evaluateAsync onHost must be a function");
     return NULL;
   }
 
@@ -337,26 +417,51 @@ static napi_value EvaluateAsync(napi_env env, napi_callback_info info) {
   }
   napi_get_value_string_utf8(env, argv[0], script, length + 1, &length);
 
+  char *contextJson = strdup("{}");
+  if (argc >= 3) {
+    napi_valuetype context_type;
+    napi_typeof(env, argv[2], &context_type);
+    if (context_type != napi_string) {
+      free(script);
+      free(contextJson);
+      napi_throw_type_error(env, NULL, "evaluateAsync contextJson must be a string");
+      return NULL;
+    }
+    size_t context_length = 0;
+    napi_get_value_string_utf8(env, argv[2], NULL, 0, &context_length);
+    free(contextJson);
+    contextJson = (char *)malloc(context_length + 1);
+    if (contextJson == NULL) {
+      free(script);
+      napi_throw_error(env, NULL, "out of memory");
+      return NULL;
+    }
+    napi_get_value_string_utf8(env, argv[2], contextJson, context_length + 1, &context_length);
+  }
+
   napi_value promise;
   napi_deferred deferred;
   napi_create_promise(env, &deferred, &promise);
   napi_threadsafe_function tsfn;
   napi_status create_status = napi_create_threadsafe_function(
-      env, argv[1], NULL, "hostFetch", 0, 1, NULL, NULL, NULL, call_js_cb, &tsfn);
+      env, argv[1], NULL, "hostCall", 0, 1, NULL, NULL, NULL, call_js_cb, &tsfn);
   if (create_status != napi_ok) {
     free(script);
-    napi_throw_error(env, NULL, "failed to create host.fetch bridge");
+    free(contextJson);
+    napi_throw_error(env, NULL, "failed to create host call bridge");
     return NULL;
   }
 
   EvalWork *work = (EvalWork *)calloc(1, sizeof(EvalWork));
   if (work == NULL) {
     free(script);
+    free(contextJson);
     napi_release_threadsafe_function(tsfn, napi_tsfn_release);
     napi_throw_error(env, NULL, "out of memory");
     return NULL;
   }
   work->script = script;
+  work->contextJson = contextJson;
   work->deferred = deferred;
   work->tsfn = tsfn;
   napi_value resource_name;
@@ -366,17 +471,21 @@ static napi_value EvaluateAsync(napi_env env, napi_callback_info info) {
   return promise;
 }
 
-static napi_value ResolveFetch(napi_env env, napi_callback_info info) {
+static napi_value ResolveHost(napi_env env, napi_callback_info info) {
   size_t argc = 2;
   napi_value argv[2] = {0};
   napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
-  if (argc < 2) return MakeString(env, "error");
+  if (argc < 2) {
+    return MakeString(env, "error");
+  }
   int32_t id = -1;
   napi_get_value_int32(env, argv[0], &id);
   size_t length = 0;
   napi_get_value_string_utf8(env, argv[1], NULL, 0, &length);
   char *result = (char *)malloc(length + 1);
-  if (result == NULL) return MakeString(env, "error");
+  if (result == NULL) {
+    return MakeString(env, "error");
+  }
   napi_get_value_string_utf8(env, argv[1], result, length + 1, &length);
   pending_set_result(id, result);
   free(result);
@@ -388,7 +497,8 @@ static napi_value Init(napi_env env, napi_value exports) {
   napi_property_descriptor desc[] = {
       {"evaluate", NULL, EvaluateSync, NULL, NULL, NULL, napi_default, NULL},
       {"evaluateAsync", NULL, EvaluateAsync, NULL, NULL, NULL, napi_default, NULL},
-      {"resolveFetch", NULL, ResolveFetch, NULL, NULL, NULL, napi_default, NULL},
+      {"resolveHost", NULL, ResolveHost, NULL, NULL, NULL, napi_default, NULL},
+      {"resolveFetch", NULL, ResolveHost, NULL, NULL, NULL, napi_default, NULL},
   };
   napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
   return exports;

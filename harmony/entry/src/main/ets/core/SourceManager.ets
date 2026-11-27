@@ -3,16 +3,28 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { httpRequest } from './Http';
 import quickjsSpike from 'libquickjs_spike.so';
+import { SourceHostContext, SourceHostInfo, SourceHostSession, hostPrelude } from './SourceHost';
 
 const TAG: string = 'HGhubX';
 const SOURCE_ROOT = 'sources';
-const DEMO_ID = 'com.hghubx.demo-offline';
+export const DEMO_ID: string = 'com.hghubx.demo-offline';
+const MAX_STORAGE_KEYS = 64;
+const MAX_STORAGE_VALUE_BYTES = 32 * 1024;
+const MAX_ORIGINS = 16;
+const SOURCE_TIMEOUT_MS = 12000;
+const MAX_HTML_BYTES = 2 * 1024 * 1024;
+const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 export interface SourceRuntime {
   kind: string;
   entry: string;
+}
+
+export interface SourceNetwork {
+  origins: string[];
+  mediaOrigins: string[];
+  publishOrigins: string[];
 }
 
 export interface SourceCapabilities {
@@ -34,6 +46,7 @@ export interface SourceManifest {
   apiVersion: string;
   runtime: SourceRuntime;
   capabilities?: SourceCapabilities;
+  network?: SourceNetwork;
   updateUrls?: string[];
 }
 
@@ -64,20 +77,15 @@ export interface SourceUpdateResult {
   reason: string;
 }
 
-export interface HttpFetchResult {
-  status: number;
-  body: string;
-}
-
-export interface SourceHostError {
-  __hostError: string;
-}
-
 /**
- * P2 pilot source package store.
+ * P2/P3a pilot source package store.
  *
- * Only the built-in offline demo source is trusted in this pilot.
- * Untrusted import, Ed25519 verification, share codes and updateUrls remain P3 work.
+ * P3a 落实上游 source contract 的 host 原语和安全边界：
+ * - QuickJS 原生线程只拿到内存/栈/中断超时和通用 host 桥；
+ * - host.fetch 白名单、HTML 只读查询、crypto、per-source storage 都在 ArkTS 侧；
+ * - 内置 offline demo 仍是唯一信任源。
+ *
+ * P3b 仍未做：非信任包导入、Ed25519 验签、分享口令、updateUrls 真实更新检查。
  */
 export class SourceManager {
   private context: common.UIAbilityContext;
@@ -196,6 +204,7 @@ export class SourceManager {
     const dir = this.packageDir(id);
     this.removeFile(dir + '/manifest.json');
     this.removeFile(dir + '/source.js');
+    this.removeFile(dir + '/storage.json');
     try {
       fileIo.rmdirSync(dir);
     } catch (e) {
@@ -220,10 +229,11 @@ export class SourceManager {
     if (!this.exists(manifestPath) || !this.exists(sourcePath)) {
       return Promise.reject(new Error('source package is not installed'));
     }
-    const manifestText = this.readText(manifestPath);
+    const manifest = this.parseManifest(this.readText(manifestPath));
     const sourceText = this.readText(sourcePath);
-    const manifest = this.parseManifest(manifestText);
+    const context = this.hostContext(manifest);
     const script = [
+      hostPrelude(),
       'var __manifest = ' + JSON.stringify(manifest) + ';',
       'var module = { exports: {} };',
       'var exports = module.exports;',
@@ -239,49 +249,175 @@ export class SourceManager {
       '};',
       'JSON.stringify(__out);'
     ].join('\n');
-    return quickjsSpike.evaluateAsync(script, (requestId: number, request: string): void => {
-      this.handleHostFetch(requestId, request);
-    });
+    const session = new SourceHostSession(context, this);
+    return quickjsSpike
+      .evaluateAsync(script, (requestId: number, request: string): void => {
+        this.dispatchHost(session, requestId, request);
+      }, JSON.stringify(context))
+      .then((result: string) => {
+        session.close();
+        return result;
+      })
+      .catch((err: Error) => {
+        session.close();
+        throw err;
+      });
   }
 
   checkUpdate(id: string): SourceUpdateResult {
     if (!this.validId(id)) {
       const invalid: SourceUpdateResult = { updated: 'false', reason: 'invalid source id' };
-    return invalid;
+      return invalid;
     }
     const manifestPath = this.packageDir(id) + '/manifest.json';
     if (!this.exists(manifestPath)) {
       const missing: SourceUpdateResult = { updated: 'false', reason: 'source not installed' };
-    return missing;
+      return missing;
     }
     const manifest = this.parseManifest(this.readText(manifestPath));
     const updateUrls = manifest.updateUrls;
     if (updateUrls === undefined || !Array.isArray(updateUrls) || updateUrls.length === 0) {
       const noUrls: SourceUpdateResult = { updated: 'false', reason: 'no update urls' };
-    return noUrls;
+      return noUrls;
     }
-    const disabled: SourceUpdateResult = { updated: 'false', reason: 'pilot update check disabled' };
+    const disabled: SourceUpdateResult = { updated: 'false', reason: 'pilot update check disabled (P3b)' };
     return disabled;
   }
 
-  private handleHostFetch(id: number, request: string): void {
-    this.httpFetch(request).then((response: HttpFetchResult) => {
-      quickjsSpike.resolveFetch(id, JSON.stringify(response));
+  async hostPilotCheck(): Promise<string> {
+    const info: SourceHostInfo = {
+      sourceId: DEMO_ID,
+      name: '离线示例源',
+      version: '1.0.0',
+      baseUrl: '',
+      origins: [],
+      mediaOrigins: [],
+      publishOrigins: [],
+      limits: {
+        maxHtmlBytes: MAX_HTML_BYTES,
+        maxResponseBytes: MAX_RESPONSE_BYTES,
+        timeoutMs: SOURCE_TIMEOUT_MS
+      }
+    };
+    const context: SourceHostContext = { sourceId: DEMO_ID, info: info, allowedOrigins: [] };
+    const session = new SourceHostSession(context, this);
+    const script = [
+      hostPrelude(),
+      'var out = {',
+      '  info: host.info.sourceId,',
+      '  sha256: host.crypto.sha256Hex("p3a"),',
+      '  random: host.crypto.randomBytes(8).b64url,',
+      '  base64: host.crypto.base64Encode("hghubx").b64,',
+      '  base64Text: host.crypto.base64Decode(host.crypto.base64Encode("hghubx").b64),',
+      '  hmac: host.crypto.hmacSha256({ keyB64: host.crypto.randomBytes(16).b64, dataUtf8: "p3a" }).hex,',
+      '  htmlItems: host.htmlQuery("<ul><li class=\\"a\\">A</li><li class=\\"b\\">B</li></ul>", "li.a").length,',
+      '  insecureBlocked: false,',
+      '  privateBlocked: false,',
+      '  originBlocked: false',
+      '};',
+      'try { host.fetch({ url: "http://example.com/" }); } catch (e) { out.insecureBlocked = true; }',
+      'try { host.fetch({ url: "https://127.0.0.1/x" }); } catch (e) { out.privateBlocked = true; }',
+      'try { host.fetch({ url: "https://example.com/x" }); } catch (e) { out.originBlocked = true; }',
+      'host.storage.set("p3a-host", "ok");',
+      'out.storage = host.storage.get("p3a-host");',
+      'var a = host.crypto.ecdhP256Create();',
+      'var b = host.crypto.ecdhP256Create();',
+      'var ka = host.crypto.ecdhP256Derive(a.handle, b.publicKeyB64Url, "", ["p3a"]);',
+      'var kb = host.crypto.ecdhP256Derive(b.handle, a.publicKeyB64Url, "", ["p3a"]);',
+      'out.ecdh = ka.length === 1 && kb.length === 1 && ka[0] === kb[0];',
+      'var aesKey = host.crypto.randomBytes(32).b64;',
+      'var nonce = host.crypto.randomBytes(12).b64;',
+      'var sealed = host.crypto.aes256GcmEncrypt({ keyB64: aesKey, nonceB64: nonce, plaintextUtf8: "p3a-host", aadUtf8: "hghubx" });',
+      'var opened = host.crypto.aes256GcmDecrypt({ keyB64: aesKey, nonceB64: nonce, ciphertextB64Url: sealed.ciphertextB64Url, aadUtf8: "hghubx" });',
+      'out.aesGcm = opened.plaintextUtf8 === "p3a-host";',
+      'JSON.stringify(out);'
+    ].join('\n');
+    try {
+      return await quickjsSpike.evaluateAsync(script, (requestId: number, request: string): void => {
+        this.dispatchHost(session, requestId, request);
+      }, JSON.stringify(context));
+    } finally {
+      session.close();
+    }
+  }
+
+  storageGet(sourceId: string, key: string): string | null {
+    if (!this.validId(sourceId) || key.length === 0 || key.length > 128) {
+      return null;
+    }
+    const path = this.packageDir(sourceId) + '/storage.json';
+    if (!this.exists(path)) {
+      return null;
+    }
+    try {
+      const map = JSON.parse(this.readText(path)) as Record<string, string>;
+      return map[key] !== undefined ? map[key] : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  storageSet(sourceId: string, key: string, value: string | null): void {
+    if (!this.validId(sourceId) || key.length === 0 || key.length > 128) {
+      throw new Error('invalid source storage key');
+    }
+    const map = this.readStorageMap(sourceId);
+    if (value === null) {
+      if (map[key] === undefined) {
+        return;
+      }
+      delete map[key];
+      this.writeStorageMap(sourceId, map);
+      return;
+    }
+    if (byteLength(value) > MAX_STORAGE_VALUE_BYTES) {
+      throw new Error('source storage value exceeds 32 KB');
+    }
+    if (map[key] === undefined && Object.keys(map).length >= MAX_STORAGE_KEYS) {
+      throw new Error('source storage key limit exceeded');
+    }
+    map[key] = value;
+    this.writeStorageMap(sourceId, map);
+  }
+
+  private dispatchHost(session: SourceHostSession, id: number, request: string): void {
+    session.handle(request).then((response: string) => {
+      quickjsSpike.resolveHost(id, response);
     }).catch((err: Error) => {
-      const errorResult: SourceHostError = { __hostError: err.message };
-      quickjsSpike.resolveFetch(id, JSON.stringify(errorResult));
+      quickjsSpike.resolveHost(id, JSON.stringify({ __hostError: err.message }));
     });
   }
 
-  private async httpFetch(request: string): Promise<HttpFetchResult> {
-    const parsed: Record<string, string> = JSON.parse(request) as Record<string, string>;
-    const url = parsed.url !== undefined ? parsed.url : '';
-    const method = parsed.method !== undefined ? parsed.method : 'GET';
-    const body = parsed.body !== undefined ? parsed.body : '';
-    const response = await httpRequest(url, method, '{}', body, false, 15000);
-    const text = new util.TextDecoder().decode(new Uint8Array(response.bytes));
-    const result: HttpFetchResult = { status: response.status, body: text };
-    return result;
+  private hostContext(manifest: SourceManifest): SourceHostContext {
+    const network = this.manifestNetwork(manifest);
+    const info: SourceHostInfo = {
+      sourceId: manifest.id,
+      name: manifest.name,
+      version: manifest.version,
+      baseUrl: network.origins.length > 0 ? network.origins[0] : '',
+      origins: network.origins,
+      mediaOrigins: network.mediaOrigins,
+      publishOrigins: network.publishOrigins,
+      limits: {
+        maxHtmlBytes: MAX_HTML_BYTES,
+        maxResponseBytes: MAX_RESPONSE_BYTES,
+        timeoutMs: SOURCE_TIMEOUT_MS
+      }
+    };
+    return {
+      sourceId: manifest.id,
+      info: info,
+      allowedOrigins: uniqueStrings(network.origins.concat(network.publishOrigins), MAX_ORIGINS)
+    };
+  }
+
+  private manifestNetwork(manifest: SourceManifest): SourceNetwork {
+    const raw = manifest.network;
+    return {
+      origins: stringArray(raw !== undefined ? raw.origins : undefined, MAX_ORIGINS),
+      mediaOrigins: stringArray(raw !== undefined ? raw.mediaOrigins : undefined, MAX_ORIGINS),
+      publishOrigins: stringArray(raw !== undefined ? raw.publishOrigins : undefined, MAX_ORIGINS)
+    };
   }
 
   private parseManifest(text: string): SourceManifest {
@@ -303,6 +439,10 @@ export class SourceManager {
     }
     if (manifest.capabilities === undefined) {
       throw new Error('manifest capabilities is required');
+    }
+    const network = this.manifestNetwork(manifest);
+    if (network.origins.length + network.mediaOrigins.length + network.publishOrigins.length > MAX_ORIGINS) {
+      throw new Error('manifest network origins exceed the limit');
     }
     return manifest;
   }
@@ -359,6 +499,24 @@ export class SourceManager {
     this.writeText(this.root + '/active.json', JSON.stringify(active));
   }
 
+  private readStorageMap(sourceId: string): Record<string, string> {
+    const path = this.packageDir(sourceId) + '/storage.json';
+    if (!this.exists(path)) {
+      return {};
+    }
+    try {
+      return JSON.parse(this.readText(path)) as Record<string, string>;
+    } catch (e) {
+      return {};
+    }
+  }
+
+  private writeStorageMap(sourceId: string, map: Record<string, string>): void {
+    const dir = this.packageDir(sourceId);
+    this.ensureDir(dir);
+    this.writeText(dir + '/storage.json', JSON.stringify(map));
+  }
+
   private readRawFile(name: string): Promise<string> {
     return new Promise<string>((resolve, reject) => {
       this.context.resourceManager.getRawFileContent(name, (err: BusinessError, data: Uint8Array) => {
@@ -413,4 +571,45 @@ export class SourceManager {
       fileIo.unlinkSync(path);
     }
   }
+}
+
+function stringArray(value: Object | undefined, max: number): string[] {
+  const out: string[] = [];
+  if (value === undefined || value === null || !Array.isArray(value)) {
+    return out;
+  }
+  const raw = value as string[];
+  for (const item of raw) {
+    if (typeof item === 'string' && item.length > 0) {
+      out.push(item);
+    }
+    if (out.length >= max) {
+      break;
+    }
+  }
+  return out;
+}
+
+function uniqueStrings(values: string[], max: number): string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    let found = false;
+    for (const item of out) {
+      if (item === value) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      out.push(value);
+    }
+    if (out.length >= max) {
+      break;
+    }
+  }
+  return out;
+}
+
+function byteLength(text: string): number {
+  return new util.TextEncoder().encodeInto(text).byteLength;
 }

@@ -73,7 +73,7 @@ export async function httpRequest(
       // The 5 MiB default is too small for some media segments and covers.
       maxLimit: 67108864
     };
-    if (body.length > 0 && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
+    if (body.length > 0 && (method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE')) {
       options.extraData = body;
     }
     let resp: http.HttpResponse;
