@@ -5,6 +5,8 @@ name: Harmony QuickJS spike
 
 on:
   workflow_dispatch:
+  push:
+    branches: [sync/upstream-3.0.0-pilot]
 
 permissions:
   contents: read
