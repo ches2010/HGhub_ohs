@@ -121,7 +121,13 @@ static JSValue js_host_fetch(JSContext *ctx, JSValueConst this_val, int argc, JS
   if (argc < 1) {
     return JS_NewString(ctx, "{\"__hostError\":\"host.fetch requires a request object\"}");
   }
-  const char *json = JS_ToCString(ctx, argv[0]);
+  JSValue json_value = JS_JSONStringify(ctx, argv[0], JS_UNDEFINED, JS_UNDEFINED);
+  if (JS_IsException(json_value)) {
+    JS_FreeValue(ctx, json_value);
+    return JS_NewString(ctx, "{\"__hostError\":\"host.fetch request is not JSON serializable\"}");
+  }
+  const char *json = JS_ToCString(ctx, json_value);
+  JS_FreeValue(ctx, json_value);
   if (json == NULL) {
     return JS_NewString(ctx, "{\"__hostError\":\"host.fetch request is not a string\"}");
   }
