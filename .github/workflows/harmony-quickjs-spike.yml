@@ -1,0 +1,116 @@
+name: Harmony QuickJS spike
+
+# P1a build-only spike: compile QuickJS-NG for HarmonyOS arm64 and upload libquickjs_spike.so.
+# This workflow does not package or install the module.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: harmony-quickjs-spike
+  cancel-in-progress: false
+
+env:
+  CLI_ZIP_URL: https://huggingface.co/csukuangfj/harmonyos-commandline-tools/resolve/main/commandline-tools-linux-x64-6.0.1.251.zip
+  CLI_CACHE_KEY: harmony-cli-6.0.1.251
+  QUICKJS_VERSION: 0.18.0
+  QUICKJS_SHA256: 28bcd89aa3683fd2a946537e5ce3f11cc46b5cbf3383c7561aaef3df5ff9f1dd
+
+jobs:
+  build:
+    name: Build libquickjs_spike.so
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Cache command-line-tools zip
+        id: cli-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/harmony-cli.zip
+          key: ${{ env.CLI_CACHE_KEY }}
+
+      - name: Download command-line-tools
+        if: steps.cli-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -fL --retry 3 --connect-timeout 30 -o ~/harmony-cli.zip "$CLI_ZIP_URL"
+
+      - name: Unpack command-line-tools
+        run: |
+          unzip -q ~/harmony-cli.zip -d "$HOME"
+          HVIGORW_PATH="$(find "$HOME" -maxdepth 4 -type f -name hvigorw -path '*/hvigor/bin/*' | head -1)"
+          if [ -z "$HVIGORW_PATH" ]; then
+            echo "::error::解压后找不到 hvigor/bin/hvigorw"
+            exit 1
+          fi
+          CLI_DIR="$(cd "$(dirname "$(dirname "$(dirname "$HVIGORW_PATH")")")" && pwd)"
+          echo "HARMONY_CLI_HOME=$CLI_DIR" >> "$GITHUB_ENV"
+          echo "command-line-tools: $CLI_DIR"
+
+      - name: Download QuickJS-NG
+        run: |
+          mkdir -p third_party
+          curl -fL --retry 3 --connect-timeout 30 \
+            -o /tmp/quickjs.tar.gz \
+            "https://codeload.github.com/quickjs-ng/quickjs/tar.gz/refs/tags/v${QUICKJS_VERSION}"
+          echo "${QUICKJS_SHA256}  /tmp/quickjs.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/quickjs.tar.gz -C third_party
+          mv "third_party/quickjs-${QUICKJS_VERSION}" third_party/quickjs
+          test -f third_party/quickjs/quickjs.h
+
+      - name: Locate OHOS native toolchain
+        run: |
+          TOOLCHAIN="$(find "$HARMONY_CLI_HOME/sdk" -path '*/native/build/cmake/ohos.toolchain.cmake' | head -1)"
+          if [ -z "$TOOLCHAIN" ]; then
+            echo "::error::找不到 ohos.toolchain.cmake"
+            find "$HARMONY_CLI_HOME/sdk" -maxdepth 5 -type d | head -80
+            exit 1
+          fi
+          NAPI_LIB="$(find "$HARMONY_CLI_HOME/sdk" -name 'libace_napi.z.so' | head -1)"
+          if [ -z "$NAPI_LIB" ]; then
+            echo "::error::找不到 libace_napi.z.so"
+            exit 1
+          fi
+          echo "OHOS_TOOLCHAIN=$TOOLCHAIN" >> "$GITHUB_ENV"
+          echo "NAPI_LIB=$NAPI_LIB" >> "$GITHUB_ENV"
+          echo "toolchain: $TOOLCHAIN"
+          echo "napi: $NAPI_LIB"
+
+      - name: Configure QuickJS spike
+        run: |
+          cmake -S harmony/native/quickjs-spike -B build-quickjs-spike \
+            -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$OHOS_TOOLCHAIN" \
+            -DOHOS_ARCH=arm64-v8a \
+            -DOHOS_PLATFORM=OHOS \
+            -DQUICKJS_SRC="$PWD/third_party/quickjs" \
+            -DNAPI_LIB="$NAPI_LIB" \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build QuickJS spike
+        run: cmake --build build-quickjs-spike -j 2
+
+      - name: Verify artifact
+        run: |
+          SO="$(find build-quickjs-spike -name 'libquickjs_spike.so' | head -1)"
+          if [ -z "$SO" ]; then
+            echo "::error::没有生成 libquickjs_spike.so"
+            find build-quickjs-spike -maxdepth 3 -type f | head -50
+            exit 1
+          fi
+          file "$SO"
+          ls -lh "$SO"
+          mkdir -p artifacts
+          cp "$SO" artifacts/libquickjs_spike.so
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: quickjs-spike-arm64
+          path: artifacts/libquickjs_spike.so
+          retention-days: 14
+          if-no-files-found: error
