@@ -10,6 +10,7 @@ const TAG: string = 'HGhubX';
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(0x0000, TAG, 'onCreate');
+    hilog.info(0x0000, TAG, 'quickjs test begin');
     try {
       const result: string = quickjsSpike.evaluate('1 + 1');
       hilog.info(0x0000, TAG, 'quickjs eval: %{public}s', result);
