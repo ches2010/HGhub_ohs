@@ -20,18 +20,43 @@ export default class EntryAbility extends UIAbility {
       const message: string = err instanceof Error ? err.message : String(err);
       hilog.error(0x0000, TAG, 'quickjs eval failed: %{public}s', message);
     }
-    this.runQuickJsFetchTest();
+    this.runQuickJsSourceTest();
   }
 
-  private runQuickJsFetchTest(): void {
-    const script: string = "const r = host.fetch({ url: 'https://www.baidu.com', method: 'GET' }); r";
+  private runQuickJsSourceTest(): void {
+    const script: string = [
+      "var module = { exports: {} };",
+      "var exports = module.exports;",
+      "module.exports = {",
+      "  home: function(args) {",
+      "    var page = (args && args.page) ? args.page : 1;",
+      "    var size = (args && args.size) ? args.size : 20;",
+      "    var probe = JSON.parse(host.fetch({ url: 'https://www.baidu.com', method: 'GET' })).status;",
+      "    return { items: [{ id: 90001, title: '示例视频' }], pagination: { page: page, pages: 1, size: size, total: 1 }, probe: probe };",
+      "  },",
+      "  detail: function(args) {",
+      "    var id = (args && args.id) ? args.id : 90001;",
+      "    return { id: id, title: '示例视频', episodes: [{ ep_num: 1, title: '第 1 集', duration: 90, status: 1 }] };",
+      "  },",
+      "  playback: function(args) {",
+      "    var id = (args && args.id) ? args.id : 90001;",
+      "    var ep = (args && args.ep) ? args.ep : 1;",
+      "    return { id: String(id), ep: ep, title: '示例视频 · 第 1 集', video_url: '' };",
+      "  }",
+      "};",
+      "JSON.stringify({",
+      "  home: module.exports.home({ page: 1, size: 2 }),",
+      "  detail: module.exports.detail({ id: 90001 }),",
+      "  playback: module.exports.playback({ id: 90001, ep: 1 })",
+      "});"
+    ].join("\n");
     quickjsSpike.evaluateAsync(script, (id: number, request: string): void => {
       this.handleHostFetch(id, request);
     }).then((result: string) => {
-      const head: string = result.length > 120 ? result.substring(0, 120) : result;
-      hilog.info(0x0000, TAG, 'quickjs async: %{public}s', head);
+      const head: string = result.length > 240 ? result.substring(0, 240) : result;
+      hilog.info(0x0000, TAG, 'quickjs source: %{public}s', head);
     }).catch((err: Error) => {
-      hilog.error(0x0000, TAG, 'quickjs async failed: %{public}s', err.message);
+      hilog.error(0x0000, TAG, 'quickjs source failed: %{public}s', err.message);
     });
   }
 
