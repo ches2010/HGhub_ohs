@@ -116,6 +116,7 @@ jobs:
         run: |
           TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
           V="${TAG#v}"
+          V="${V//\//-}"
           SRC="$(find harmony/entry/build -type f -name '*-unsigned.hap' | head -1)"
           if [ -z "$SRC" ]; then
             echo "::error::没有找到 unsigned HAP"
