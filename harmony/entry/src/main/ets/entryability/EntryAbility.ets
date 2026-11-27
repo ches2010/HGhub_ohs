@@ -11,7 +11,7 @@ export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(0x0000, TAG, 'onCreate');
     try {
-      const result: string = quickjsSpike.eval('1 + 1');
+      const result: string = quickjsSpike.evaluate('1 + 1');
       hilog.info(0x0000, TAG, 'quickjs eval: %{public}s', result);
     } catch (err) {
       const message: string = err instanceof Error ? err.message : String(err);

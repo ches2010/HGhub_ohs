@@ -1,1 +1,1 @@
-export const eval: (script: string) => string;
+export const evaluate: (script: string) => string;

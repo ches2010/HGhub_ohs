@@ -13,7 +13,7 @@ static napi_value Eval(napi_env env, napi_callback_info info) {
   size_t argc = 1;
   napi_value argv[1] = {0};
   napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
-  if (argc < 1) return MakeString(env, "error: eval requires one string argument");
+  if (argc < 1) return MakeString(env, "error: evaluate requires one string argument");
 
   size_t length = 0;
   napi_get_value_string_utf8(env, argv[0], NULL, 0, &length);
@@ -57,7 +57,7 @@ static napi_value Eval(napi_env env, napi_callback_info info) {
 
 static napi_value Init(napi_env env, napi_value exports) {
   napi_property_descriptor desc[] = {
-      {"eval", NULL, Eval, NULL, NULL, NULL, napi_default, NULL},
+      {"evaluate", NULL, Eval, NULL, NULL, NULL, napi_default, NULL},
   };
   napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
   return exports;
