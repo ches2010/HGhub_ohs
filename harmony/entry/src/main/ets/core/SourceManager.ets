@@ -115,7 +115,7 @@ export class SourceManager {
       throw new Error('source.js is empty');
     }
     const dir = this.packageDir(manifest.id);
-    fileIo.mkdirSync(dir, true);
+    this.ensureDir(dir);
     this.writeText(dir + '/manifest.json', manifestText);
     this.writeText(dir + '/source.js', sourceText);
 
@@ -338,7 +338,7 @@ export class SourceManager {
   }
 
   private writeIndex(index: SourceDescriptor[]): void {
-    fileIo.mkdirSync(this.root, true);
+    this.ensureDir(this.root);
     this.writeText(this.root + '/installed.json', JSON.stringify(index));
   }
 
@@ -355,7 +355,7 @@ export class SourceManager {
   }
 
   private writeActive(active: SourceActive): void {
-    fileIo.mkdirSync(this.root, true);
+    this.ensureDir(this.root);
     this.writeText(this.root + '/active.json', JSON.stringify(active));
   }
 
@@ -373,6 +373,12 @@ export class SourceManager {
         }
       });
     });
+  }
+
+  private ensureDir(path: string): void {
+    if (!this.exists(path)) {
+      fileIo.mkdirSync(path, true);
+    }
   }
 
   private exists(path: string): boolean {
