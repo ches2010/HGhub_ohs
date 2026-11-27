@@ -6,6 +6,7 @@ import { getSharedBridge } from '../core/Bridge';
 import { httpRequest } from '../core/Http';
 import { util } from '@kit.ArkTS';
 import quickjsSpike from 'libquickjs_spike.so';
+import { SourceManager } from '../core/SourceManager';
 
 const TAG: string = 'HGhubX';
 
@@ -53,12 +54,31 @@ export default class EntryAbility extends UIAbility {
       }).then((result: string) => {
         const head: string = result.length > 240 ? result.substring(0, 240) : result;
         hilog.info(0x0000, TAG, 'quickjs package: %{public}s', head);
+        this.runSourcePilotTest();
       }).catch((err: Error) => {
         hilog.error(0x0000, TAG, 'quickjs package failed: %{public}s', err.message);
       });
     }).catch((err: Error) => {
       hilog.error(0x0000, TAG, 'quickjs package read failed: %{public}s', err.message);
     });
+  }
+
+  private runSourcePilotTest(): void {
+    const manager = new SourceManager(this.context);
+    manager.importDemo()
+      .then(() => {
+        hilog.info(0x0000, TAG, 'source pilot state: %{public}s', JSON.stringify(manager.state()));
+        return manager.test('com.hghubx.demo-offline');
+      })
+      .then((result: string) => {
+        const head: string = result.length > 160 ? result.substring(0, 160) : result;
+        hilog.info(0x0000, TAG, 'source pilot test: %{public}s', head);
+        manager.activate('com.hghubx.demo-offline');
+        hilog.info(0x0000, TAG, 'source pilot active: %{public}s', JSON.stringify(manager.state()));
+      })
+      .catch((err: Error) => {
+        hilog.error(0x0000, TAG, 'source pilot failed: %{public}s', err.message);
+      });
   }
 
   private readRawFile(name: string): Promise<string> {

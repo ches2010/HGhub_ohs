@@ -18,6 +18,7 @@ import { util } from '@kit.ArkTS';
 import { connection } from '@kit.NetworkKit';
 import { httpRequest } from './Http';
 import { PlaybackLog } from './PlaybackLog';
+import { SourceManager } from './SourceManager';
 
 const TAG: string = 'HGhubX';
 
@@ -50,10 +51,12 @@ export class Bridge {
   /** 页面是否已加载完成，未完成时不要吞返回键 */
   private pageReady: boolean = false;
   private playbackLog: PlaybackLog;
+  private sourceManager: SourceManager;
 
   constructor(context: common.UIAbilityContext) {
     this.context = context;
     this.playbackLog = new PlaybackLog(context.filesDir);
+    this.sourceManager = new SourceManager(context);
   }
 
   attach(controller: webview.WebviewController): void {
@@ -182,6 +185,66 @@ export class Bridge {
         hilog.error(0x0000, TAG, 'terminateSelf failed: %{public}s', e.message);
       });
     });
+  }
+
+  sourceState(reqId: string): void {
+    try {
+      this.reply(reqId, true, JSON.stringify(this.sourceManager.state()));
+    } catch (err) {
+      this.reply(reqId, false, (err as Error).message);
+    }
+  }
+
+  sourceImportDemo(reqId: string): void {
+    this.sourceManager.importDemo()
+      .then(() => {
+        this.reply(reqId, true, JSON.stringify(this.sourceManager.state()));
+      })
+      .catch((err: Error) => {
+        this.reply(reqId, false, err.message);
+      });
+  }
+
+  sourceTest(reqId: string, id: string): void {
+    this.sourceManager.test(id)
+      .then((result: string) => {
+        this.reply(reqId, true, JSON.stringify({ id: id, result: result }));
+      })
+      .catch((err: Error) => {
+        this.reply(reqId, false, err.message);
+      });
+  }
+
+  sourceActivate(reqId: string, id: string): void {
+    try {
+      this.reply(reqId, true, JSON.stringify(this.sourceManager.activate(id)));
+    } catch (err) {
+      this.reply(reqId, false, (err as Error).message);
+    }
+  }
+
+  sourceRollback(reqId: string): void {
+    try {
+      this.reply(reqId, true, JSON.stringify(this.sourceManager.rollback()));
+    } catch (err) {
+      this.reply(reqId, false, (err as Error).message);
+    }
+  }
+
+  sourceRemove(reqId: string, id: string): void {
+    try {
+      this.reply(reqId, true, JSON.stringify(this.sourceManager.remove(id)));
+    } catch (err) {
+      this.reply(reqId, false, (err as Error).message);
+    }
+  }
+
+  sourceCheckUpdate(reqId: string, id: string): void {
+    try {
+      this.reply(reqId, true, JSON.stringify(this.sourceManager.checkUpdate(id)));
+    } catch (err) {
+      this.reply(reqId, false, (err as Error).message);
+    }
   }
 
   /** 网络快照：给前端 net_diag 用（默认网络、承载类型、DNS、链路地址） */
