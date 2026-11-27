@@ -24,39 +24,56 @@ export default class EntryAbility extends UIAbility {
   }
 
   private runQuickJsSourceTest(): void {
-    const script: string = [
-      "var module = { exports: {} };",
-      "var exports = module.exports;",
-      "module.exports = {",
-      "  home: function(args) {",
-      "    var page = (args && args.page) ? args.page : 1;",
-      "    var size = (args && args.size) ? args.size : 20;",
-      "    var probe = JSON.parse(host.fetch({ url: 'https://www.baidu.com', method: 'GET' })).status;",
-      "    return { items: [{ id: 90001, title: '示例视频' }], pagination: { page: page, pages: 1, size: size, total: 1 }, probe: probe };",
-      "  },",
-      "  detail: function(args) {",
-      "    var id = (args && args.id) ? args.id : 90001;",
-      "    return { id: id, title: '示例视频', episodes: [{ ep_num: 1, title: '第 1 集', duration: 90, status: 1 }] };",
-      "  },",
-      "  playback: function(args) {",
-      "    var id = (args && args.id) ? args.id : 90001;",
-      "    var ep = (args && args.ep) ? args.ep : 1;",
-      "    return { id: String(id), ep: ep, title: '示例视频 · 第 1 集', video_url: '' };",
-      "  }",
-      "};",
-      "JSON.stringify({",
-      "  home: module.exports.home({ page: 1, size: 2 }),",
-      "  detail: module.exports.detail({ id: 90001 }),",
-      "  playback: module.exports.playback({ id: 90001, ep: 1 })",
-      "});"
-    ].join("\n");
-    quickjsSpike.evaluateAsync(script, (id: number, request: string): void => {
-      this.handleHostFetch(id, request);
-    }).then((result: string) => {
-      const head: string = result.length > 240 ? result.substring(0, 240) : result;
-      hilog.info(0x0000, TAG, 'quickjs source: %{public}s', head);
+    Promise.all([
+      this.readRawFile('quickjs/demo-offline/manifest.json'),
+      this.readRawFile('quickjs/demo-offline/source.js')
+    ]).then((values: string[]) => {
+      const manifestJson: string = JSON.stringify(JSON.parse(values[0]));
+      const sourceText: string = values[1];
+      const script: string = [
+        "var __manifest = " + manifestJson + ";",
+        "if (__manifest.schemaVersion !== 1 || __manifest.runtime.kind !== 'quickjs' || __manifest.runtime.entry !== 'source.js') { throw new Error('manifest contract failed'); }",
+        "if (!__manifest.capabilities.home || !__manifest.capabilities.detail || !__manifest.capabilities.playback) { throw new Error('manifest capabilities failed'); }",
+        "var module = { exports: {} };",
+        "var exports = module.exports;",
+        sourceText,
+        "var required = ['init', 'home', 'search', 'tags', 'hotTags', 'tagVideos', 'detail', 'playback'];",
+        "for (var i = 0; i < required.length; i++) { if (typeof module.exports[required[i]] !== 'function') { throw new Error('missing source export: ' + required[i]); } }",
+        "var __out = {",
+        "  manifest: { id: __manifest.id, name: __manifest.name, version: __manifest.version, runtime: __manifest.runtime },",
+        "  init: module.exports.init(),",
+        "  home: module.exports.home({ page: 1, size: 2 }),",
+        "  detail: module.exports.detail({ id: 90001 }),",
+        "  playback: module.exports.playback({ id: 90001, ep: 1 })",
+        "};",
+        "JSON.stringify(__out);"
+      ].join("\n");
+      quickjsSpike.evaluateAsync(script, (id: number, request: string): void => {
+        this.handleHostFetch(id, request);
+      }).then((result: string) => {
+        const head: string = result.length > 240 ? result.substring(0, 240) : result;
+        hilog.info(0x0000, TAG, 'quickjs package: %{public}s', head);
+      }).catch((err: Error) => {
+        hilog.error(0x0000, TAG, 'quickjs package failed: %{public}s', err.message);
+      });
     }).catch((err: Error) => {
-      hilog.error(0x0000, TAG, 'quickjs source failed: %{public}s', err.message);
+      hilog.error(0x0000, TAG, 'quickjs package read failed: %{public}s', err.message);
+    });
+  }
+
+  private readRawFile(name: string): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      this.context.resourceManager.getRawFileContent(name, (err: BusinessError, data: Uint8Array) => {
+        if (err !== undefined && err !== null) {
+          reject(err);
+          return;
+        }
+        try {
+          resolve(new util.TextDecoder().decode(data));
+        } catch (e) {
+          reject(e as Error);
+        }
+      });
     });
   }
 

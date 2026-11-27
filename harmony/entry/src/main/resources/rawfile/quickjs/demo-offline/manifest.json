@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "id": "com.hghubx.demo-offline",
+  "name": "离线示例源",
+  "version": "1.0.0",
+  "apiVersion": "1",
+  "description": "",
+  "author": "HGhubX",
+  "runtime": {
+    "kind": "quickjs",
+    "entry": "source.js"
+  },
+  "network": {
+    "origins": [],
+    "mediaOrigins": [],
+    "publishOrigins": []
+  },
+  "capabilities": {
+    "home": true,
+    "search": true,
+    "catalog": {
+      "categories": false,
+      "tags": true,
+      "rankings": false,
+      "authors": false
+    },
+    "detail": {
+      "episodes": true,
+      "related": false,
+      "comments": false
+    },
+    "playback": {
+      "hls": false,
+      "mp4": false,
+      "subtitles": false
+    },
+    "posts": false,
+    "account": false,
+    "lines": false
+  }
+}
