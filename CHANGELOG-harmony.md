@@ -12,6 +12,18 @@
 
 ---
 
+## [2.2.10-p8] 2026-11-28 — QuickJS 源运行时试点 P8：版本级备份与精确回滚
+
+- 修复实际缺口：此前的 `source_rollback` 只在「两个源 id」之间切激活，同 id 升级后旧包已被覆盖，无法回退版本。
+- `SourceManager.installPackage` 在覆写 `package.json` 前，若检测到已装版本不同，把旧包写入 `sources/<id>/versions/<version>.json`，并用 `sources/<id>-versions.json` 维护版本清单（避免依赖 `fileIo.readdirSync`，该 API 在目标 SDK 不存在），最多保留 5 份、按 semver 淘汰最旧。
+- 新增 `source_revert_version(id, version)` 命令：读备份包 → Ed25519 验签 → `init()` 冒烟 → 重新安装；回滚保留当前版本为备份，可来回切换。回滚同样受 `allowUntrusted` 与验签约束。
+- `SourceState.installed[]` 新增 `versions: string[]`；旧 `installed.json` 无该字段时在 `state()` 补空数组，保证向前兼容。
+- 源管理面板新增「历史版本」chip 行，点击二次确认回滚。
+- 踩坑记录：首次实现误用 P3b 版 `SourceManager` 作基线，丢掉 P5 的 `host.auth` 第三参数（`Expected 3 arguments, but got 2`）并使用了不存在的 `fileIo.readdirSync`，构建 7 错；已在 P5 基线上重放 P8 改动并改用清单文件，构建通过。
+- 提交 `82ecbdf`（首版，构建失败）、`0271f29`（修复）；构建 run 52。
+
+---
+
 ## [2.2.10-p7] 2026-11-28 — QuickJS 源运行时试点 P7：对齐上游源管理 UX
 
 - 按上游 `SourceManager` / `SourceOnboarding`（`src/app/startup/`、`src/features/settings/`）重排源管理面板：

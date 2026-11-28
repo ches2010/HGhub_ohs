@@ -60,6 +60,7 @@
 | P5 | host.auth 真实登录态（RFC 0001 语义） | `cd0085d` | run 45 |
 | P6 | hghubx:// 深链导入（上游暂存/取走契约） | `2c8a079` | run 46 |
 | P7 | 上游源管理 UX 对齐（徽标/内联测试/空态试用/粘贴） | `f44503b` | run 47 |
+| P8 | 版本级备份与精确回滚（`source_revert_version`） | `82ecbdf` `0271f29` | run 52 |
 
 关键真机验证输出：
 
@@ -89,7 +90,7 @@ P4 真机链路：jsDelivr URL 导入 v1.0.0（trusted，指纹 `81:f0:13:0c:db:
 
 - 未接桥命令：`source_lan_push_*`、`tv_peer_pair_qr` / `tv_peer_sync`、`cache_stats` / `cache_set_limit` / `cache_clear`。
 - 旧前端平台识别仍输出 `[env] platform=android`，接 v3 UI 时改 HarmonyOS。
-- 无版本级备份/回滚目录（仅保留上一激活源）。
+- 版本级备份已支持（每源最多 5 份历史包，可精确回滚）；仍无「按时间点整库快照」式备份。
 - `host.fetch` 未做逐跳重定向校验与 DNS 固定。
 - 版本切换 `3.0.0` / `3000000` 与合并 `main` / 打 tag / 发布 Release：须待全量回归并获维护者明确授权。
 
