@@ -118,6 +118,18 @@ function decodeBase64Url(text: string): Uint8Array {
   return new util.Base64Helper().decodeSync(urlToStandard(trimmed));
 }
 
+// HarmonyOS cryptoFramework requires RFC 8410 SubjectPublicKeyInfo DER for raw Ed25519 public keys.
+const ED25519_SPKI_PREFIX: number[] = [
+  0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00
+];
+
+function ed25519PublicDer(rawPublic: Uint8Array): Uint8Array {
+  const out = new Uint8Array(ED25519_SPKI_PREFIX.length + rawPublic.length);
+  out.set(ED25519_SPKI_PREFIX);
+  out.set(rawPublic, ED25519_SPKI_PREFIX.length);
+  return out;
+}
+
 export function keyFingerprint(rawPublicKey: Uint8Array): string {
   const digest = sha256Bytes(rawPublicKey);
   const parts: string[] = [];
@@ -177,7 +189,7 @@ export function verifyPackage(pkg: VerifiablePackage): SourceSignatureInfo {
   }
   const payload = toBytes(canonicalPayload(pkg));
   const generator = cryptoFramework.createAsyKeyGenerator('Ed25519');
-  const keyPair = generator.convertKeySync({ data: rawPublic }, null);
+  const keyPair = generator.convertKeySync({ data: ed25519PublicDer(rawPublic) }, null);
   const verifier = cryptoFramework.createVerify('Ed25519');
   verifier.initSync(keyPair.pubKey);
   const ok = verifier.verifySync({ data: payload }, { data: signatureBytes });
