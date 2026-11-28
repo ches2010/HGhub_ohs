@@ -8,6 +8,7 @@ import quickjsSpike from 'libquickjs_spike.so';
 import { SourceHostContext, SourceHostInfo, SourceHostSession, hostPrelude, isPublicHttpsUrl } from './SourceHost';
 import { canonicalPayload, SourceSignatureInfo, verifyPackage, VerifiablePackage, VerifyImageDecrypt, VerifyManifest, VerifyMedia, VerifyNetwork, VerifyRuntime, VerifySignature } from './SourceVerify';
 import { decodeShareCode, encodeShareCode } from './SourceShare';
+import { loadSourceAuthToken } from './SourceAuth';
 
 const TAG: string = 'HGhubX';
 const SOURCE_ROOT = 'sources';
@@ -151,7 +152,6 @@ export class SourceManager {
   state(): SourceState {
     const active = this.readActive();
     const installed = this.readIndex();
-    // P8：老版本 installed.json 没有 versions 字段，补空数组避免前端 undefined
     for (const item of installed) {
       if (!Array.isArray(item.versions)) {
         item.versions = [];
@@ -372,7 +372,7 @@ export class SourceManager {
       }
     };
     const context: SourceHostContext = { sourceId: DEMO_ID, info: info, allowedOrigins: [] };
-    const session = new SourceHostSession(context, this);
+    const session = new SourceHostSession(context, this, (): string => loadSourceAuthToken(this.context.filesDir));
     const script = [
       hostPrelude(),
       'var out = {',
@@ -383,6 +383,7 @@ export class SourceManager {
       '  base64Text: host.crypto.base64Decode(host.crypto.base64Encode("hghubx").b64),',
       '  hmac: host.crypto.hmacSha256({ keyB64: host.crypto.randomBytes(16).b64, dataUtf8: "p3a" }).hex,',
       '  htmlItems: host.htmlQuery("<ul><li class=\\"a\\">A</li><li class=\\"b\\">B</li></ul>", "li.a").length,',
+      '  authHasToken: (function () { try { var t = host.auth.token; return typeof t === \"string\" && t.length > 0; } catch (e) { return false; } })(),',
       '  insecureBlocked: false,',
       '  privateBlocked: false,',
       '  originBlocked: false',
@@ -668,7 +669,7 @@ export class SourceManager {
 
   private runPackageScript(pkg: SourcePackage, script: string): Promise<string> {
     const context = this.hostContext(pkg.manifest);
-    const session = new SourceHostSession(context, this);
+    const session = new SourceHostSession(context, this, (): string => loadSourceAuthToken(this.context.filesDir));
     return quickjsSpike
       .evaluateAsync(script, (requestId: number, request: string): void => {
         this.dispatchHost(session, requestId, request);
@@ -689,7 +690,6 @@ export class SourceManager {
     manifest.network = network;
     const dir = this.packageDir(manifest.id);
     this.ensureDir(dir);
-    // P8：覆写前把当前版本备份为 versions/<version>.json，便于精确回滚。
     try {
       const currentPath = dir + '/package.json';
       if (this.exists(currentPath)) {
@@ -755,10 +755,7 @@ export class SourceManager {
     return pkg;
   }
 
-  /**
-   * P8：回滚到某个已备份版本（验收签 + init 冒烟，与导入同安全标准）。
-   * 回滚后保留当前版本为备份，可再次切回。
-   */
+  /** P8：回滚到某个已备份版本（验签 + init 冒烟，与导入同安全标准） */
   async revertVersion(id: string, version: string): Promise<SourceState> {
     if (!this.validId(id) || !this.validVersion(version)) {
       throw new Error('invalid source id or version');
@@ -789,54 +786,72 @@ export class SourceManager {
     return this.packageDir(id) + '/versions';
   }
 
-  private backupVersion(dir: string, version: string, packageJson: string): void {
-    if (!this.validVersion(version)) {
-      return;
-    }
-    const vdir = this.versionsDirFromDir(dir);
-    this.ensureDir(vdir);
-    this.writeText(vdir + '/' + version + '.json', packageJson);
-    // 只保留最近 MAX_VERSION_BACKUPS 份（按版本号升序，旧者先删）
-    const all = this.readVersionsFromDir(vdir);
-    if (all.length <= MAX_VERSION_BACKUPS) {
-      return;
-    }
-    let oldest = all[0];
-    for (const v of all) {
-      if (this.isNewerVersion(oldest, v)) {
-        oldest = v;
-      }
-    }
-    this.removeFile(vdir + '/' + oldest + '.json');
-  }
-
-  private versionsDirFromDir(dir: string): string {
-    return dir + '/versions';
+  private versionsManifest(id: string): string {
+    return this.root + '/' + id + '-versions.json';
   }
 
   private readVersions(id: string): string[] {
     if (!this.validId(id)) {
       return [];
     }
-    return this.readVersionsFromDir(this.versionsDir(id));
-  }
-
-  private readVersionsFromDir(vdir: string): string[] {
-    const out: string[] = [];
+    const path = this.versionsManifest(id);
+    if (!this.exists(path)) {
+      return [];
+    }
     try {
-      const names = fileIo.readdirSync(vdir);
-      for (const name of names) {
-        if (name.endsWith('.json')) {
-          const v = name.substring(0, name.length - 5);
-          if (this.validVersion(v)) {
-            out.push(v);
-          }
+      const parsed = JSON.parse(this.readText(path)) as string[];
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+      const out: string[] = [];
+      for (const v of parsed) {
+        if (typeof v === 'string' && this.validVersion(v)) {
+          out.push(v);
         }
       }
-    } catch (e) {
       return out;
+    } catch (e) {
+      return [];
     }
-    return out;
+  }
+
+  private backupVersion(dir: string, version: string, packageJson: string): void {
+    if (!this.validVersion(version)) {
+      return;
+    }
+    const vdir = dir + '/versions';
+    this.ensureDir(vdir);
+    this.writeText(vdir + '/' + version + '.json', packageJson);
+    const id = this.idFromDir(dir);
+    const all = this.readVersions(id);
+    if (all.indexOf(version) < 0) {
+      all.push(version);
+    }
+    let toRemove: string = '';
+    if (all.length > MAX_VERSION_BACKUPS) {
+      let oldest = all[0];
+      for (const v of all) {
+        if (this.isNewerVersion(oldest, v)) {
+          oldest = v;
+        }
+      }
+      toRemove = oldest;
+    }
+    const kept: string[] = [];
+    for (const v of all) {
+      if (v !== toRemove) {
+        kept.push(v);
+      }
+    }
+    this.writeText(this.versionsManifest(id), JSON.stringify(kept));
+    if (toRemove.length > 0) {
+      this.removeFile(vdir + '/' + toRemove + '.json');
+    }
+  }
+
+  private idFromDir(dir: string): string {
+    const prefix = this.root + '/';
+    return dir.startsWith(prefix) ? dir.substring(prefix.length) : '';
   }
 
   private readPackage(id: string): SourcePackage {
