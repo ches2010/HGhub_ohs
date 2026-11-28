@@ -2,7 +2,7 @@ import { AbilityConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { getSharedBridge } from '../core/Bridge';
+import { getSharedBridge, setPendingDeepLink } from '../core/Bridge';
 import quickjsSpike from 'libquickjs_spike.so';
 import { SourceManager, DEMO_ID } from '../core/SourceManager';
 
@@ -20,6 +20,20 @@ export default class EntryAbility extends UIAbility {
       hilog.error(0x0000, TAG, 'quickjs eval failed: %{public}s', message);
     }
     this.runSourcePilotTest();
+    this.captureDeepLink(want);
+  }
+
+  onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    hilog.info(0x0000, TAG, 'onNewWant');
+    this.captureDeepLink(want);
+  }
+
+  /** 系统层 hghubx://import?src=... 深链：暂存给前端取走（P6） */
+  private captureDeepLink(want: Want): void {
+    const uri = want.uri;
+    if (typeof uri === 'string' && uri.toLowerCase().startsWith('hghubx://')) {
+      setPendingDeepLink(uri);
+    }
   }
 
   private runSourcePilotTest(): void {

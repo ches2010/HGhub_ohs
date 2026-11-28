@@ -12,6 +12,7 @@
  * 真正的跨域问题由 ArkTS 侧的 http() 解决（原生请求没有 CORS）。
  */
 import { lineStateStore } from "./line";
+import { tr } from "../shared/i18n";
 import { buildUpdateInfo, noReleaseInfo, type ReleaseAsset } from "./update";
 import {
   autoPick,
@@ -1940,6 +1941,8 @@ export async function invoke<T = Json>(cmd: string, args: Record<string, Json> =
       return (await nativeInvoke("sourceRemove", String(a.id ?? ""))) as T;
     case "source_check_update":
       return (await nativeInvoke("sourceCheckUpdate", String(a.id ?? ""))) as T;
+    case "source_take_deep_link":
+      return (await nativeInvoke("sourceTakeDeepLink")) as T;
 
     default:
       return notPorted(cmd);
@@ -1954,6 +1957,47 @@ export function isTauri(): boolean {
   const flag = (window as unknown as { isTauri?: boolean }).isTauri;
   return flag === true;
 }
+
+/* ── 深链导入（P6，对齐上游 source_take_deep_link） ─────────────────
+ * 系统层打开 hghubx://import?src=... 时 EntryAbility 暂存 URI；
+ * 页面就绪后由 __hgDeepLinkArrived 或启动兜底取走，走同一套
+ * source_import 流水线（验签 + init 冒烟），完成后广播 hg:sources-changed。
+ */
+(window as unknown as { __hgDeepLinkArrived?: () => void }).__hgDeepLinkArrived = () => {
+  void runPendingDeepLink();
+};
+
+async function runPendingDeepLink(): Promise<void> {
+  if (!hasHarmonyBridge()) return;
+  let uri: string | null = null;
+  try {
+    uri = (await invoke<string | null>("source_take_deep_link")) ?? null;
+  } catch {
+    return;
+  }
+  if (typeof uri !== "string" || uri.length === 0) return;
+  let ok = false;
+  let message = "";
+  try {
+    const descriptor = (await invoke("source_import", { input: uri, activate: false })) as {
+      name?: string;
+      version?: string;
+    } | null;
+    ok = true;
+    message = tr("已通过深链导入 {0} v{1}", String(descriptor?.name ?? ""), String(descriptor?.version ?? ""));
+  } catch (e) {
+    message = typeof e === "string" ? e : e instanceof Error ? e.message : tr("深链导入失败");
+  }
+  try {
+    native().log(`[deep_link] ${ok ? "ok" : "failed"} ${message}`);
+  } catch {
+    /* 日志失败不影响流程 */
+  }
+  window.dispatchEvent(new CustomEvent("hg:sources-changed", { detail: { ok, message } }));
+}
+
+// 启动兜底：冷启动时 pending 在页面加载前就位，onPageEnd 会通知；这里再兜一次
+setTimeout(() => { void runPendingDeepLink(); }, 2000);
 
 /** 启动时把当前线路同步给 ArkTS 侧（媒体代理要用它做 Referer） */
 export function syncBaseToNative(): void {

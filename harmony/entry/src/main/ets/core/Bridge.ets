@@ -44,6 +44,23 @@ export function setSharedBridge(bridge: Bridge): void {
   sharedBridge = bridge;
 }
 
+/**
+ * P6：系统层 hghubx:// 深链暂存（对齐上游 PENDING_DEEP_LINK）。
+ * EntryAbility.onCreate / onNewWant 捕获 URI 后先暂存；页面就绪后
+ * 由前端 source_take_deep_link 取走并自己走 source_import 流水线。
+ * URI 里含分享口令，日志只记长度，不记内容。
+ */
+let pendingDeepLink: string | null = null;
+
+export function setPendingDeepLink(uri: string): void {
+  pendingDeepLink = uri;
+  hilog.info(0x0000, TAG, 'pending deep link set (len=%{public}d)', uri.length);
+  const bridge = sharedBridge;
+  if (bridge !== null) {
+    bridge.notifyPendingDeepLink();
+  }
+}
+
 export function getSharedBridge(): Bridge | null {
   return sharedBridge;
 }
@@ -270,6 +287,28 @@ export class Bridge {
    * 前端在登录 / 退出 / 切线路时推送当前会话 token（host.auth 用）。
    * 自定义线路由前端推空串；这里只落盘，不打印 token 本身。
    */
+  /** 上游契约：取走并清空暂存深链（无 pending 时返回 null），前端自己走导入流水线 */
+  sourceTakeDeepLink(reqId: string): void {
+    const uri = pendingDeepLink;
+    pendingDeepLink = null;
+    this.reply(reqId, true, JSON.stringify(uri));
+  }
+
+  /** 页面就绪时通知前端「有待取深链」；页面未就绪则等 onPageEnd 再通知 */
+  notifyPendingDeepLink(): void {
+    if (pendingDeepLink === null) {
+      return;
+    }
+    const controller = this.controller;
+    if (controller === null) {
+      return;
+    }
+    controller.runJavaScript('window.__hgDeepLinkArrived && window.__hgDeepLinkArrived()')
+      .catch((err: BusinessError) => {
+        hilog.warn(0x0000, TAG, 'deep link notify failed: %{public}s', err.message);
+      });
+  }
+
   sourceSetAuthToken(token: string): void {
     try {
       saveSourceAuthToken(this.context.filesDir, token);

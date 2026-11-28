@@ -97,6 +97,19 @@ export default function SourceManagerSettings() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
+  // 深链等旁路导入完成后广播刷新；带 detail 时把结果回显到结果区
+  useEffect(() => {
+    const handler = (event: Event): void => {
+      const detail = (event as CustomEvent<{ ok: boolean; message: string }>).detail;
+      if (detail && detail.message.length > 0) {
+        setLastResult(detail.message);
+      }
+      void refresh();
+    };
+    window.addEventListener("hg:sources-changed", handler);
+    return () => window.removeEventListener("hg:sources-changed", handler);
+  }, [refresh]);
+
   const run = useCallback((key: string, action: () => Promise<string>): void => {
     if (busy.length > 0) return;
     setBusy(key);
