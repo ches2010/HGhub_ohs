@@ -58,6 +58,7 @@
 | P3c | 源管理 UI + 前端桥接线 | `5b0ca14` `0bd915a` | run 42 / 43 |
 | P4 | 信任根 + HTTPS 导入 + 升级链路 | `ac71828` `fff33f2` | run 44 |
 | P5 | host.auth 真实登录态（RFC 0001 语义） | `cd0085d` | run 45 |
+| P6 | hghubx:// 深链导入（上游暂存/取走契约） | `2c8a079` | run 46 |
 
 关键真机验证输出：
 
@@ -85,7 +86,7 @@ P4 真机链路：jsDelivr URL 导入 v1.0.0（trusted，指纹 `81:f0:13:0c:db:
 
 ## 7. 已知限制与后续工作
 
-- 未接桥命令：`source_take_deep_link`、`source_lan_push_*`、`tv_peer_pair_qr` / `tv_peer_sync`、`cache_stats` / `cache_set_limit` / `cache_clear`。
+- 未接桥命令：`source_lan_push_*`、`tv_peer_pair_qr` / `tv_peer_sync`、`cache_stats` / `cache_set_limit` / `cache_clear`。
 - 旧前端平台识别仍输出 `[env] platform=android`，接 v3 UI 时改 HarmonyOS。
 - 无版本级备份/回滚目录（仅保留上一激活源）。
 - `host.fetch` 未做逐跳重定向校验与 DNS 固定。

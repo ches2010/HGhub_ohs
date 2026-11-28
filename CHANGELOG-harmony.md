@@ -12,6 +12,16 @@
 
 ---
 
+## [2.2.10-p6] 2026-11-28 — QuickJS 源运行时试点 P6：hghubx:// 深链导入
+
+- 对齐上游 `source_take_deep_link` 暂存/取走契约（`commands.rs` 的 `PENDING_DEEP_LINK`）：`EntryAbility` 在 `onCreate` / `onNewWant` 捕获 `hghubx://` URI 暂存（日志只记长度），前端页面就绪后经 `source_take_deep_link` 取走，走同一套 `source_import` 流水线（验签 + init 冒烟），不自动激活。
+- 深链格式与上游一致：`hghubx://import?src=...`（host 或 path 为 `import`，query 键 `url|src|code`）；我们已有的 `parseDeepLink` 天然兼容。
+- `module.json5` 注册 `hghubx` scheme（`ohos.want.action.viewData`），系统层点开链接即可唤起应用。
+- 前端：`core.ts` 新增 `source_take_deep_link` 分支与 `runPendingDeepLink`（启动 2s 兜底 + `__hgDeepLinkArrived` 事件双入口），导入结果写原生日志并广播 `hg:sources-changed`；源管理面板监听该事件自动刷新并回显结果。
+- 提交 `2c8a079`；构建 run 46。
+
+---
+
 ## [2.2.10-p5] 2026-11-28 — QuickJS 源运行时试点 P5：host.auth 真实登录态
 
 - 按上游 RFC 0001 实现 `host.auth` 真实语义：返回 `{ token }`，未登录或不可信线路（用户手输的自定义域名）时为 `null`。此前 P3a 为固定 `token: null` 占位。
