@@ -288,8 +288,12 @@ export class Bridge {
    * 自定义线路由前端推空串；这里只落盘，不打印 token 本身。
    */
   /**
-   * P7 r2：读取系统剪贴板（ArkWeb 对 navigator.clipboard.readText 有隐私限制，
-   * 前端「粘贴」走原生 pasteboard）。只回传文本，不落日志。
+   * P7 r3：读取系统剪贴板。
+   *
+   * HarmonyOS 对新应用读取剪贴板有隐私限制：跨应用读取通常不直接返回内容，
+   * 而是抛出带「临时授权」语义的错误，需由用户点安全控件（PasteButton）授权。
+   * 这里把 err.code / err.message 原样带回前端，由前端区分
+   * 「真空 / 需授权 / 不支持」，给出可操作提示，不再一律说成空。
    */
   pasteFromClipboard(reqId: string): void {
     try {
@@ -297,8 +301,10 @@ export class Bridge {
       const text = data.getPrimaryText();
       this.reply(reqId, true, JSON.stringify(typeof text === 'string' ? text : ''));
     } catch (err) {
-      const message = err instanceof Error && err.message.length > 0 ? err.message : '剪贴板为空或不可读';
-      this.reply(reqId, false, message);
+      const e = err as BusinessError;
+      const code = typeof e.code === 'number' ? e.code : -1;
+      const message = typeof e.message === 'string' && e.message.length > 0 ? e.message : '读取剪贴板失败';
+      this.reply(reqId, false, `code=${code} msg=${message}`);
     }
   }
 
