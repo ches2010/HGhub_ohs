@@ -1,7 +1,7 @@
 # 上游 v3 QuickJS 源运行时移植试点总结（P1–P4）
 
 > 分支：`sync/upstream-3.0.0-pilot`（`main` 保持 2.2.10 稳定，未合并）
-> 试点 HAP：`2.2.10-p4` / versionCode `2002022`（构建 run 44，`fff33f2`）
+> 试点 HAP：`2.2.10-p5` / versionCode `2002023`（构建 run 45，`cd0085d`）
 > 状态：P1–P4 全部真机验证通过；合并 `main` / 切版本号 `3.0.0` 需维护者明确授权。
 
 ## 1. 背景与总体决策
@@ -22,7 +22,7 @@
   - `host.htmlQuery`：只读子集（tag / `.class` / `#id` / `[attr]` / `[attr=value]`，200 条上限）。
   - `host.crypto`：sha256 / random / base64 / hmac / AES-256-GCM / ECDH P-256 + HKDF-SHA256。
   - `host.storage`：per-source 64 键 / 32 KB。
-  - `host.auth`：试点固定 `token: null`，未接真实登录态。
+  - `host.auth`：P5 起按 RFC 0001 实现真实语义（`{ token }`，未登录或自定义线路为 `null`）；token 由前端登录 / 切线时经 `sourceSetAuthToken` 推送并落盘 `filesDir/source_auth.json`。
 
 ## 3. 包格式与安全模型
 
@@ -57,6 +57,7 @@
 | P3b | 包格式 / 验签 / 分享码 | `4c2b2ad` `40a52ef` `d325b75` | run 39 / 41 |
 | P3c | 源管理 UI + 前端桥接线 | `5b0ca14` `0bd915a` | run 42 / 43 |
 | P4 | 信任根 + HTTPS 导入 + 升级链路 | `ac71828` `fff33f2` | run 44 |
+| P5 | host.auth 真实登录态（RFC 0001 语义） | `cd0085d` | run 45 |
 
 关键真机验证输出：
 
@@ -84,7 +85,6 @@ P4 真机链路：jsDelivr URL 导入 v1.0.0（trusted，指纹 `81:f0:13:0c:db:
 
 ## 7. 已知限制与后续工作
 
-- `host.auth` 试点固定 `token: null`，未接真实登录态。
 - 未接桥命令：`source_take_deep_link`、`source_lan_push_*`、`tv_peer_pair_qr` / `tv_peer_sync`、`cache_stats` / `cache_set_limit` / `cache_clear`。
 - 旧前端平台识别仍输出 `[env] platform=android`，接 v3 UI 时改 HarmonyOS。
 - 无版本级备份/回滚目录（仅保留上一激活源）。

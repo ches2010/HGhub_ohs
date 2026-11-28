@@ -12,6 +12,18 @@
 
 ---
 
+## [2.2.10-p5] 2026-11-28 — QuickJS 源运行时试点 P5：host.auth 真实登录态
+
+- 按上游 RFC 0001 实现 `host.auth` 真实语义：返回 `{ token }`，未登录或不可信线路（用户手输的自定义域名）时为 `null`。此前 P3a 为固定 `token: null` 占位。
+- 线路信任策略放在前端（只有前端知道 `lineStateStore.isCustom()`）：登录 / 退出（`setSession`）、切线路（`setBase` / `line_custom_set`）、启动会话恢复（`syncBaseToNative`）都会经新桥方法 `sourceSetAuthToken` 把当前 token 推给原生；自定义线路推空串。
+- 新增 `SourceAuth.ets`：token 槽落盘 `filesDir/source_auth.json`，供 QuickJS 会话与 EntryAbility 启动自检读取；日志只记 present / cleared，绝不输出 token 本身。
+- `SourceHost` prelude 的 `host.auth` 从静态 `{ token: null }` 改为 getter（每次访问走 `__hostCall("auth")`），host 对象保持冻结；新增 op `auth`。
+- `Index.ets` JS 代理注册补 `sourceSetAuthToken`；启动自检 `source host pilot` 新增 `authHasToken` 字段（只报布尔）。
+- 示例源升级 `com.hghubx.demo-p4` v1.0.2（p4-pilot-1 签名，raw 通道发布）：`init()` 调 `host.auth` 返回 `authHasToken`，覆盖已登录 / 未登录 / 自定义线路三种真机状态。
+- 提交 `cd0085d`；构建 run 45。
+
+---
+
 ## [2.2.10-p4] 2026-11-28 — QuickJS 源运行时试点 P4：信任根与升级链路
 
 - 新增试点信任根 `p4-pilot-1`（Ed25519 公钥内置 `SourceVerify.ets`，指纹 `81:f0:13:0c:db:0e:c5:b4`）：命中信任根且验签通过的包标记 `trusted`，关闭「允许导入未签名源」时也可导入。此前 `trusted` 仅 demo 源硬编码，验签路径只会产出 `self_signed`。
