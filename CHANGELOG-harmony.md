@@ -12,6 +12,22 @@
 
 ---
 
+## [2.2.10-p7] 2026-11-28 — QuickJS 源运行时试点 P7：对齐上游源管理 UX
+
+- 按上游 `SourceManager` / `SourceOnboarding`（`src/app/startup/`、`src/features/settings/`）重排源管理面板：
+  导入卡片（粘贴入口 + mono 输入框 + 导入后激活开关 + 深链提示）、
+  源卡片徽标（版本 / 示例 / 使用中 / 签名状态）、内联测试结果条
+  （`bg-mint/15` / `bg-danger/15`，解析 `source_test` 的 init/home JSON 统计条目数）、
+  空态「试用离线示例源」。
+- 新增 `pasteText()`（`shared/lib/clipboard.ts`，navigator.clipboard.readText，
+  ArkWeb 在 `127.0.0.1` 安全上下文可用）与 `source_import_demo` 命令分支
+  （导入 + 激活离线示例源，对应上游「试用离线示例源」）。
+- 保持既有能力不变：二次确认移除、回滚、allowUntrusted 开关、
+  分享码导出、深链导入结果回显（`hg:sources-changed`）。
+- 提交 `f44503b`；构建 run 47。
+
+---
+
 ## [2.2.10-p6] 2026-11-28 — QuickJS 源运行时试点 P6：hghubx:// 深链导入
 
 - 对齐上游 `source_take_deep_link` 暂存/取走契约（`commands.rs` 的 `PENDING_DEEP_LINK`）：`EntryAbility` 在 `onCreate` / `onNewWant` 捕获 `hghubx://` URI 暂存（日志只记长度），前端页面就绪后经 `source_take_deep_link` 取走，走同一套 `source_import` 流水线（验签 + init 冒烟），不自动激活。
