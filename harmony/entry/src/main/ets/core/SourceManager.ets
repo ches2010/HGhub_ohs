@@ -8,12 +8,12 @@ import quickjsSpike from 'libquickjs_spike.so';
 import { SourceHostContext, SourceHostInfo, SourceHostSession, hostPrelude, isPublicHttpsUrl } from './SourceHost';
 import { canonicalPayload, SourceSignatureInfo, verifyPackage, VerifiablePackage, VerifyImageDecrypt, VerifyManifest, VerifyMedia, VerifyNetwork, VerifyRuntime, VerifySignature } from './SourceVerify';
 import { decodeShareCode, encodeShareCode } from './SourceShare';
-import { loadSourceAuthToken } from './SourceAuth';
 
 const TAG: string = 'HGhubX';
 const SOURCE_ROOT = 'sources';
 export const DEMO_ID: string = 'com.hghubx.demo-offline';
 const MAX_STORAGE_KEYS = 64;
+const MAX_VERSION_BACKUPS = 5;
 const MAX_STORAGE_VALUE_BYTES = 32 * 1024;
 const MAX_ORIGINS = 16;
 const MAX_UPDATE_URLS = 8;
@@ -95,6 +95,7 @@ export interface SourceDescriptor {
   signatureStatus?: string;
   signatureKeyId?: string;
   signatureFingerprint?: string;
+  versions: string[];
 }
 
 export interface SourceActive {
@@ -150,6 +151,12 @@ export class SourceManager {
   state(): SourceState {
     const active = this.readActive();
     const installed = this.readIndex();
+    // P8：老版本 installed.json 没有 versions 字段，补空数组避免前端 undefined
+    for (const item of installed) {
+      if (!Array.isArray(item.versions)) {
+        item.versions = [];
+      }
+    }
     return {
       runtime: 'quickjs',
       pilot: true,
@@ -365,7 +372,7 @@ export class SourceManager {
       }
     };
     const context: SourceHostContext = { sourceId: DEMO_ID, info: info, allowedOrigins: [] };
-    const session = new SourceHostSession(context, this, (): string => loadSourceAuthToken(this.context.filesDir));
+    const session = new SourceHostSession(context, this);
     const script = [
       hostPrelude(),
       'var out = {',
@@ -376,7 +383,6 @@ export class SourceManager {
       '  base64Text: host.crypto.base64Decode(host.crypto.base64Encode("hghubx").b64),',
       '  hmac: host.crypto.hmacSha256({ keyB64: host.crypto.randomBytes(16).b64, dataUtf8: "p3a" }).hex,',
       '  htmlItems: host.htmlQuery("<ul><li class=\\"a\\">A</li><li class=\\"b\\">B</li></ul>", "li.a").length,',
-      '  authHasToken: (function () { try { var t = host.auth.token; return typeof t === \"string\" && t.length > 0; } catch (e) { return false; } })(),',
       '  insecureBlocked: false,',
       '  privateBlocked: false,',
       '  originBlocked: false',
@@ -662,7 +668,7 @@ export class SourceManager {
 
   private runPackageScript(pkg: SourcePackage, script: string): Promise<string> {
     const context = this.hostContext(pkg.manifest);
-    const session = new SourceHostSession(context, this, (): string => loadSourceAuthToken(this.context.filesDir));
+    const session = new SourceHostSession(context, this);
     return quickjsSpike
       .evaluateAsync(script, (requestId: number, request: string): void => {
         this.dispatchHost(session, requestId, request);
@@ -683,6 +689,18 @@ export class SourceManager {
     manifest.network = network;
     const dir = this.packageDir(manifest.id);
     this.ensureDir(dir);
+    // P8：覆写前把当前版本备份为 versions/<version>.json，便于精确回滚。
+    try {
+      const currentPath = dir + '/package.json';
+      if (this.exists(currentPath)) {
+        const current = JSON.parse(this.readText(currentPath)) as SourcePackage;
+        if (current.manifest !== undefined && current.manifest.version !== manifest.version) {
+          this.backupVersion(dir, current.manifest.version, JSON.stringify(current));
+        }
+      }
+    } catch (e) {
+      hilog.warn(0x0000, TAG, 'source version backup failed id=%{public}s', String(manifest.id));
+    }
     this.writeText(dir + '/package.json', JSON.stringify(pkg));
     this.writeText(dir + '/manifest.json', JSON.stringify(manifest));
     this.writeText(dir + '/source.js', pkg.code);
@@ -695,7 +713,8 @@ export class SourceManager {
       updatedAt: Date.now(),
       signatureStatus: signature.status,
       signatureKeyId: signature.keyId,
-      signatureFingerprint: signature.fingerprint
+      signatureFingerprint: signature.fingerprint,
+      versions: this.readVersions(manifest.id)
     };
     const index = this.readIndex();
     let replaced = false;
@@ -734,6 +753,90 @@ export class SourceManager {
       updateUrls: updateUrls
     };
     return pkg;
+  }
+
+  /**
+   * P8：回滚到某个已备份版本（验收签 + init 冒烟，与导入同安全标准）。
+   * 回滚后保留当前版本为备份，可再次切回。
+   */
+  async revertVersion(id: string, version: string): Promise<SourceState> {
+    if (!this.validId(id) || !this.validVersion(version)) {
+      throw new Error('invalid source id or version');
+    }
+    if (!this.installedContains(id)) {
+      throw new Error('source not installed');
+    }
+    const path = this.packageDir(id) + '/versions/' + version + '.json';
+    if (!this.exists(path)) {
+      throw new Error('version backup not found');
+    }
+    const pkg = JSON.parse(this.readText(path)) as SourcePackage;
+    const signature = verifyPackage(pkg);
+    if (!this.allowUntrusted && signature.status !== 'trusted') {
+      throw new Error('当前未允许导入未受信任视频源');
+    }
+    await this.smokeTestPackage(pkg);
+    this.installPackage(pkg, signature, signature.status === 'trusted', false);
+    hilog.info(0x0000, TAG, 'source version revert ok id=%{public}s version=%{public}s', id, version);
+    return this.state();
+  }
+
+  private validVersion(version: string): boolean {
+    return /^[0-9A-Za-z.+-]{1,32}$/.test(version);
+  }
+
+  private versionsDir(id: string): string {
+    return this.packageDir(id) + '/versions';
+  }
+
+  private backupVersion(dir: string, version: string, packageJson: string): void {
+    if (!this.validVersion(version)) {
+      return;
+    }
+    const vdir = this.versionsDirFromDir(dir);
+    this.ensureDir(vdir);
+    this.writeText(vdir + '/' + version + '.json', packageJson);
+    // 只保留最近 MAX_VERSION_BACKUPS 份（按版本号升序，旧者先删）
+    const all = this.readVersionsFromDir(vdir);
+    if (all.length <= MAX_VERSION_BACKUPS) {
+      return;
+    }
+    let oldest = all[0];
+    for (const v of all) {
+      if (this.isNewerVersion(oldest, v)) {
+        oldest = v;
+      }
+    }
+    this.removeFile(vdir + '/' + oldest + '.json');
+  }
+
+  private versionsDirFromDir(dir: string): string {
+    return dir + '/versions';
+  }
+
+  private readVersions(id: string): string[] {
+    if (!this.validId(id)) {
+      return [];
+    }
+    return this.readVersionsFromDir(this.versionsDir(id));
+  }
+
+  private readVersionsFromDir(vdir: string): string[] {
+    const out: string[] = [];
+    try {
+      const names = fileIo.readdirSync(vdir);
+      for (const name of names) {
+        if (name.endsWith('.json')) {
+          const v = name.substring(0, name.length - 5);
+          if (this.validVersion(v)) {
+            out.push(v);
+          }
+        }
+      }
+    } catch (e) {
+      return out;
+    }
+    return out;
   }
 
   private readPackage(id: string): SourcePackage {

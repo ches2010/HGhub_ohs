@@ -22,6 +22,7 @@ interface SourceInstallEntry {
   signatureStatus?: string;
   signatureKeyId?: string;
   signatureFingerprint?: string;
+  versions?: string[];
 }
 
 interface SourcePilotState {
@@ -71,6 +72,7 @@ export default function SourceManagerSettings() {
   const [activateOnImport, setActivateOnImport] = useState(true);
   const [busy, setBusy] = useState("");
   const [confirmRemoveId, setConfirmRemoveId] = useState("");
+  const [confirmRevertKey, setConfirmRevertKey] = useState("");
   const [lastResult, setLastResult] = useState("");
   const [tests, setTests] = useState<Record<string, TestChip>>({});
 
@@ -238,6 +240,20 @@ export default function SourceManagerSettings() {
     });
   };
 
+  const doRevertVersion = (id: string, version: string): void => {
+    const key = `revert:${id}:${version}`;
+    if (confirmRevertKey === key) {
+      setConfirmRevertKey("");
+      run(key, async () => {
+        await invoke("source_revert_version", { id, version });
+        toast(tr("已回滚到 v{0}", version), "ok");
+        return tr("{0} 已回滚到 v{1}", id, version);
+      });
+      return;
+    }
+    setConfirmRevertKey(key);
+  };
+
   const doRollback = (): void => {
     const previous = previousId;
     run("rollback", async () => {
@@ -340,6 +356,20 @@ export default function SourceManagerSettings() {
             )}
             {chip && (
               <div className={`rounded px-2 py-1 text-[11px] ${chip.ok ? "bg-mint/15 text-mint" : "bg-danger/15 text-danger"}`}>{chip.text}</div>
+            )}
+            {entry.versions && entry.versions.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1">
+                <span className="text-[11px] text-dim">{tr("历史版本")}</span>
+                {entry.versions.map((v) => {
+                  const key = `revert:${entry.id}:${v}`;
+                  return (
+                    <Button key={v} disabled={busy.length > 0} onClick={() => doRevertVersion(entry.id, v)}
+                      className="h-6 rounded-(--r-sm) bg-s4 px-2 font-mono text-[11px] text-on pressable disabled:opacity-50">
+                      {confirmRevertKey === key ? tr("确认回滚") : `v${v}`}
+                    </Button>
+                  );
+                })}
+              </div>
             )}
             <div className="flex flex-wrap gap-1.5 pt-0.5">
               {!active && (

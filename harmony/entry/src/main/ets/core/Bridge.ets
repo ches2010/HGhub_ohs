@@ -303,6 +303,17 @@ export class Bridge {
    * 这里把 err.code / err.message 原样带回前端，由前端区分
    * 「真空 / 需授权 / 不支持」，给出可操作提示，不再一律说成空。
    */
+  /** P8：回滚到某个已备份的历史版本（验签 + 冒烟后安装） */
+  sourceRevertVersion(reqId: string, id: string, version: string): void {
+    this.sourceManager.revertVersion(id, version)
+      .then((state) => {
+        this.reply(reqId, true, JSON.stringify(state));
+      })
+      .catch((err: Error) => {
+        this.reply(reqId, false, err.message);
+      });
+  }
+
   /** P7 r4：请求用户点原生 PasteButton 安全控件授权，再回传剪贴板文本 */
   requestPaste(reqId: string): void {
     this.pendingPasteReqId = reqId;
