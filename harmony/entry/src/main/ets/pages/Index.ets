@@ -215,7 +215,9 @@ struct Index {
             bridge,
             'hghub',
             ['http', 'setBase', 'openUrl', 'setOrientation', 'log', 'clearCache', 'setBackEnabled', 'background', 'netInfo',
-            'playbackLogStatus', 'playbackLogSet', 'playbackLogAppend', 'playbackLogRead']
+            'playbackLogStatus', 'playbackLogSet', 'playbackLogAppend', 'playbackLogRead',
+            'sourceState', 'sourceImportDemo', 'sourceTest', 'sourceActivate', 'sourceRollback', 'sourceRemove',
+            'sourceImport', 'sourceExportShareCode', 'sourceSetAllowUntrusted', 'sourceCheckUpdate']
           );
           // 服务可能已经起来了：attach 之后补一次加载
           if (this.targetUrl.length > 0 && !this.pageLoaded) {

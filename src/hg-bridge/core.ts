@@ -1904,6 +1904,26 @@ export async function invoke<T = Json>(cmd: string, args: Record<string, Json> =
     case "playback_log_read":
       return (await nativeInvoke("playbackLogRead")) as T;
 
+    /* —— 视频源包（QuickJS 试点 P3c；命令名对齐上游 v3） —— */
+    case "source_state":
+      return (await nativeInvoke("sourceState")) as T;
+    case "source_import":
+      return (await nativeInvoke("sourceImport", String(a.input ?? ""), !!a.activate)) as T;
+    case "source_export_share_code":
+      return (await nativeInvoke("sourceExportShareCode", String(a.id ?? ""))) as T;
+    case "source_set_allow_untrusted":
+      return (await nativeInvoke("sourceSetAllowUntrusted", !!a.allow)) as T;
+    case "source_test":
+      return (await nativeInvoke("sourceTest", String(a.id ?? ""))) as T;
+    case "source_activate":
+      return (await nativeInvoke("sourceActivate", String(a.id ?? ""))) as T;
+    case "source_rollback":
+      return (await nativeInvoke("sourceRollback")) as T;
+    case "source_remove":
+      return (await nativeInvoke("sourceRemove", String(a.id ?? ""))) as T;
+    case "source_check_update":
+      return (await nativeInvoke("sourceCheckUpdate", String(a.id ?? ""))) as T;
+
     default:
       return notPorted(cmd);
   }

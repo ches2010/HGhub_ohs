@@ -6,6 +6,7 @@ import { Modal, Toggle } from "../../shared/ui/ui";
 import LinePicker from "./LinePicker";
 import ProxySettings from "./ProxySettings";
 import ContentPreferencesSettings from "./ContentPreferencesSettings";
+import SourceManagerSettings from "./SourceManagerSettings";
 import SettingsSection from "./SettingsSection";
 import { UsageAgreementText } from "../../shared/ui/UsageAgreement";
 import { USAGE_AGREEMENT_VERSION } from "../../shared/storage/usageAgreement";
@@ -18,7 +19,7 @@ import { isBalanceVolumeSupported } from "../playback/balanceVolume";
 import { IBack, IBoltF, IBroom, IChevR, ICompress, IGlobe, IHeart, IHome, IInfo, ILink, ILockF, IMoon, IRefresh, ISun, IVol, IVolMute } from "../../shared/ui/icons";
 import { LOCALE_OPTIONS, N_, setLocale, tr, useLocale, type Locale } from "../../shared/i18n";
 
-const SETTING_GROUPS = [N_("外观"), N_("播放"), N_("内容偏好"), N_("本地数据"), N_("网络"), N_("播放诊断"), N_("其他")] as const;
+const SETTING_GROUPS = [N_("外观"), N_("播放"), N_("内容偏好"), N_("本地数据"), N_("网络"), N_("播放诊断"), N_("视频源"), N_("其他")] as const;
 type SettingGroup = typeof SETTING_GROUPS[number];
 
 /* 独立设置页：线路 / 外观 / 播放 / 本地数据 / 清理缓存 / 网络诊断 / 关于
@@ -348,6 +349,7 @@ export default function Settings({ onBack, initialSection }: { onBack: () => voi
             </Button>
             {playbackLog.path && <details className="ios-settings-log-path text-[12px] text-mut"><summary className="cursor-pointer py-3">{tr("查看日志保存位置")}</summary><p className="break-all select-text pb-3">{playbackLog.path}</p></details>}
           </>)}
+          {section(N_("视频源"), <SourceManagerSettings />)}
           {section(N_("其他"), <>
             <Button onClick={checkUpdate} disabled={checking} className="ios-settings-row text-left pressable disabled:opacity-60">
               <span className="ios-setting-icon">{checking ? <Loader label={tr("正在检查更新")} className="size-4" /> : <IRefresh size={16} />}</span>
