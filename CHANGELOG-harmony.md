@@ -4,10 +4,60 @@
 上游前端 / Rust 侧的变更请看上游仓库的 release notes（本仓库同步上游时会在提交里注明基线）。
 
 当前 HAP 版本：**2.2.10**（`versionCode` 2002010，跟随上游 v2.2.10）
+试点分支 `sync/upstream-3.0.0-pilot`：**2.2.10-p4**（`versionCode` 2002022，QuickJS 源运行时试点 P1–P4，未合并 main）
 技术栈：ArkWeb 宿主 + ArkTS 桥 + loopback HTTP 服务（`127.0.0.1:17860`）
 
 文末「[验证与测试记录](#验证与测试记录)」是移植过程中实际跑过的检查项（含命令、用例数与结果，
 以及**未覆盖**的部分），可作为回归时的自检清单。
+
+---
+
+## [2.2.10-p4] 2026-11-28 — QuickJS 源运行时试点 P4：信任根与升级链路
+
+- 新增试点信任根 `p4-pilot-1`（Ed25519 公钥内置 `SourceVerify.ets`，指纹 `81:f0:13:0c:db:0e:c5:b4`）：命中信任根且验签通过的包标记 `trusted`，关闭「允许导入未签名源」时也可导入。此前 `trusted` 仅 demo 源硬编码，验签路径只会产出 `self_signed`。
+- 私钥仅存维护者本地签名机（不入库），仓库与源包只含公钥；正式版应改为可滚动配置的信任库。
+- 签发真实源包 `com.hghubx.demo-p4` v1.0.0 / v1.0.1（基于 demo-offline 代码，标题可区分版本），发布到 `sources/pilot/p4-demo/`：raw.githubusercontent 分支通道 + jsDelivr @commit-sha 不可变通道，发布后均实测 200 且内容一致。
+- 种子包 `updateUrls` 双通道：raw 优先、jsDelivr 兜底；`latest.json` 为全新 URL，避免 CDN 陈旧缓存误报「无新版本」。
+- 真机全链路通过：HTTPS URL 导入（验签 + init 冒烟）→ 检查更新（下载 → 验签 → semver 递增 → 冒烟 → 安装）→ 测试输出标题由「P4 示例视频 1」变为「P4 已更新到 1.0.1」。
+- 提交 `ac71828`（信任根 + 包发布）、`fff33f2`（种子包补 jsDelivr 兜底）；构建 run 44。
+
+---
+
+## [2.2.10-p3c] 2026-11-28 — QuickJS 源运行时试点 P3c：源管理前端
+
+- 设置页新增「视频源」分区（`src/features/settings/SourceManagerSettings.tsx`）：分享口令 / JSON / HTTPS 地址导入、导入后直接激活开关、已装源列表（版本 + 签名状态 + 指纹 + 使用中标记）、激活 / 测试 / 检查更新 / 分享码（复制失败回退为回显）/ 移除（二次点击确认）/ 回滚 / 「允许导入未签名源」开关；非鸿蒙宿主显示不可用提示。
+- 前端 `invoke()` 新增 9 个 `source_*` 命令分支（`source_state` / `source_import` / `source_export_share_code` / `source_set_allow_untrusted` / `source_test` / `source_activate` / `source_rollback` / `source_remove` / `source_check_update`），命令名与上游 v3 对齐，为后续切 v3 UI 做准备。
+- 修复：`Index.ets` 的 `registerJavaScriptProxy` 方法列表从未注册任何 `source*` 方法，前端此前完全调不到 P2/P3b 桥——本次补齐全部 10 个。
+- 修复分享码导出：`encodeShareCode` 的 `gzwrite` 传入的是从未拷入内容的全零 `ArrayBuffer`，导出口令实际是「零字节流的 gzip」，导入必报 `Unexpected end in JSON`；改为先拷贝 payload 再压缩（P3b 真机自检只覆盖解码路径，故未暴露）。
+- 修复操作按钮样式：芯片底色 `bg-s3` 与卡片同色导致隐形、「移除」因 `variant="danger"` + `.ios-button` 44px 最小尺寸规则渲染为大红圆钮；统一为 `bg-s4` + 红字小按钮。
+- TypeScript 5.9.3 严格模式对本分支 `tsc --noEmit` 通过（改动文件零新增错误）。
+- 提交 `5b0ca14`（面板 + 桥接线）、`0bd915a`（gzwrite 修复 + 样式）；构建 run 42 / 43；真机通过（含分享码导出 → 粘贴 → 导入闭环）。
+
+---
+
+## [2.2.10-p3b] 2026-11-28 — QuickJS 源运行时试点 P3b：包格式与验签
+
+- 新增 `SourcePackage` 包格式（`{schemaVersion, manifest, code, updateUrls, signature?}`，`runtime.entry` 支持 `inline` / `source.js`），对齐上游 `src-tauri/src/source/manifest.rs`。
+- 新增 `SourceVerify.ets`：canonical payload 逐行复刻上游 `verify.rs`（`hghubx-source-v1` 开头、`code_sha256` 结尾带空行）、Ed25519 验签、SHA-256、base64url、公钥指纹（sha256 前 8 字节冒号分隔）。
+- 新增 `SourceShare.ets`：`hghubx-src://` 分享口令 = `base64url(gzip(utf8(packageJson)))`，解压上限 512 KB。
+- `SourceManager` 重构为包存储：包校验、导入、`updateUrls` 手动检查（id 一致 + 验签 + semver 递增 + init 冒烟）、导出分享码、`allowUntrusted` 门禁（默认开启）。
+- 修复：HarmonyOS `cryptoFramework` 不接受 32 字节原始 Ed25519 公钥（报 `convert key fail`），需先包 RFC 8410 SPKI DER 前缀 `302a300506032b6570032100`。
+- 修复：`ZStream.totalOut` 在真机不可靠导致解压长度错判（报「超出 512 KB 上限」），改用系统 `GZip.gzopen/gzread` 文件式 API，`gzread` 返回值为真实字节数；临时文件放 `cacheDir` 用完即删。
+- 自检夹具：rawfile `quickjs/p3b-signed/`（package.json / share.txt / tampered.json，Python cryptography 本地签发），启动自检验证解码、验签、篡改拒绝。
+- 提交 `4c2b2ad`、`40a52ef`、`d325b75`；构建 run 39 / 41；真机 `source package pilot: {"id":"com.hghubx.demo-signed",...,"shareOk":true,"tamperRejected":true}` 通过。
+
+---
+
+## [2.2.10-p1a~p3a] 2026-11-27 ~ 11-28 — QuickJS 源运行时试点 P1–P3a
+
+- 背景与决策见 `docs/investigations/upstream-v3-quickjs-pilot-summary.md`。上游 v3.0.0 重写历史与 fork 无共同祖先，不能 merge；在 `sync/upstream-3.0.0-pilot` 分支分阶段试点，`main` 保持稳定。
+- P1a：QuickJS spike——QuickJS-NG v0.18.0 + OHOS command-line-tools 6.0.1.251 编译 arm64 `libquickjs_spike.so`（首次失败为链接 x86_64 `libace_napi.z.so`，改匹配 `*aarch64-linux-ohos*`）。
+- P1b：`.so` 入包（`harmony/entry/libs/arm64-v8a/`）+ ArkTS 同步 `evaluate`（首次失败为 ArkTS 保留字 `eval`，导出改名 `evaluate`）。
+- P1c：`evaluateAsync` + `napi_threadsafe_function` 回调 ArkTS `httpRequest`、原生线程 mutex/condvar 阻塞等待（20s 超时）；修复 C 侧对对象参数 `JS_ToCString` 得 `[object Object]`，改 `JS_JSONStringify`。P1c2 / P1c4：从 rawfile 读取上游 demo 源包，校验 schema/runtime/capabilities 并执行 `init/home/detail/playback`。
+- P2：`SourceManager`（`filesDir/sources/<id>`、`installed.json` / `active.json` 持久化、导入 / 激活 / 回滚 / 删除 / 测试 / 禁用更新检查）；修复 `importTrusted` 无条件 `mkdirSync` 报 `File exists`，改 `ensureDir`。
+- P3a：通用 `__hostCall(op, payload)` 桥 + host 六能力（info / auth（试点固定 token:null）/ fetch / htmlQuery / crypto / storage）；原生运行时限制 16 MiB 堆 / 512 KiB 栈 / 12s 中断，执行前删除 `__hostCall` 原始全局。关键修复：`JS_SetPropertyStr` 接管值后再次 `JS_FreeValue` 双重释放导致真机闪退；ECDH 空 salt 传 `Base64Helper.decodeSync('')` 崩溃。
+- host.fetch 边界：HTTPS 公网 + manifest origin 白名单 + 禁 Host/Cookie 等敏感头 + 256 KiB 请求体 / 2 MiB 响应；htmlQuery 只读子集 200 条上限；storage per-source 64 键 / 32 KB。
+- 构建 run 18–34；真机 `source pilot` / `source pilot active` / `source host pilot` 通过。
 
 ---
 
