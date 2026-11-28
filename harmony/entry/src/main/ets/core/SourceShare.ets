@@ -155,7 +155,11 @@ export async function encodeShareCode(packageJson: string, tempDir: string): Pro
   try {
     await gzip.gzopen(tempPath, 'wb9');
     opened = true;
-    const written = await gzip.gzwrite(new ArrayBuffer(sourceBytes.byteLength), sourceBytes.byteLength);
+    // gzwrite 的第一个参数是输入数据本身，必须把包内容拷进缓冲区；
+    // 直接 new ArrayBuffer(len) 得到的是全零缓冲，压缩出来的是零字节流。
+    const buffer = new ArrayBuffer(sourceBytes.byteLength);
+    new Uint8Array(buffer).set(sourceBytes);
+    const written = await gzip.gzwrite(buffer, sourceBytes.byteLength);
     if (written !== sourceBytes.byteLength) {
       throw new Error('分享口令压缩失败');
     }

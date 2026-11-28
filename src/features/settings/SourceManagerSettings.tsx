@@ -281,24 +281,24 @@ export default function SourceManagerSettings() {
             <div className="flex flex-wrap gap-1.5">
               {!active && (
                 <Button disabled={busy.length > 0} onClick={() => doActivate(entry.id)}
-                  className="h-8 rounded-(--r-ctl) bg-s3 px-3 text-[12px] text-on/80 pressable disabled:opacity-60">
+                  className="rounded-(--r-ctl) bg-s4 px-3 text-[12px] text-on/80 pressable disabled:opacity-60">
                   {busy === `activate:${entry.id}` ? tr("激活中…") : tr("激活")}
                 </Button>
               )}
               <Button disabled={busy.length > 0} onClick={() => doTest(entry.id)}
-                className="h-8 rounded-(--r-ctl) bg-s3 px-3 text-[12px] text-on/80 pressable disabled:opacity-60">
+                className="rounded-(--r-ctl) bg-s4 px-3 text-[12px] text-on/80 pressable disabled:opacity-60">
                 {busy === `test:${entry.id}` ? tr("测试中…") : tr("测试")}
               </Button>
               <Button disabled={busy.length > 0} onClick={() => doCheckUpdate(entry.id)}
-                className="h-8 rounded-(--r-ctl) bg-s3 px-3 text-[12px] text-on/80 pressable disabled:opacity-60">
+                className="rounded-(--r-ctl) bg-s4 px-3 text-[12px] text-on/80 pressable disabled:opacity-60">
                 {busy === `update:${entry.id}` ? tr("检查中…") : tr("检查更新")}
               </Button>
               <Button disabled={busy.length > 0} onClick={() => doExportShare(entry.id)}
-                className="h-8 rounded-(--r-ctl) bg-s3 px-3 text-[12px] text-on/80 pressable disabled:opacity-60">
+                className="rounded-(--r-ctl) bg-s4 px-3 text-[12px] text-on/80 pressable disabled:opacity-60">
                 {busy === `share:${entry.id}` ? tr("生成中…") : tr("分享码")}
               </Button>
-              <Button variant="danger" disabled={busy.length > 0} onClick={() => doRemove(entry.id)}
-                className="h-8 rounded-(--r-ctl) px-3 text-[12px] pressable disabled:opacity-60">
+              <Button disabled={busy.length > 0} onClick={() => doRemove(entry.id)}
+                className="rounded-(--r-ctl) bg-s4 px-3 text-[12px] text-danger pressable disabled:opacity-60">
                 {confirmRemoveId === entry.id ? tr("再次点击确认移除") : busy === `remove:${entry.id}` ? tr("移除中…") : tr("移除")}
               </Button>
             </div>
