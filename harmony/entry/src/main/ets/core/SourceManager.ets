@@ -3,8 +3,11 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { httpRequest } from './Http';
 import quickjsSpike from 'libquickjs_spike.so';
-import { SourceHostContext, SourceHostInfo, SourceHostSession, hostPrelude } from './SourceHost';
+import { SourceHostContext, SourceHostInfo, SourceHostSession, hostPrelude, isPublicHttpsUrl } from './SourceHost';
+import { canonicalPayload, SourceSignatureInfo, verifyPackage } from './SourceVerify';
+import { decodeShareCode, encodeShareCode } from './SourceShare';
 
 const TAG: string = 'HGhubX';
 const SOURCE_ROOT = 'sources';
@@ -12,6 +15,9 @@ export const DEMO_ID: string = 'com.hghubx.demo-offline';
 const MAX_STORAGE_KEYS = 64;
 const MAX_STORAGE_VALUE_BYTES = 32 * 1024;
 const MAX_ORIGINS = 16;
+const MAX_UPDATE_URLS = 8;
+const MAX_PACKAGE_BYTES = 512 * 1024;
+const MAX_CODE_BYTES = 256 * 1024;
 const SOURCE_TIMEOUT_MS = 12000;
 const MAX_HTML_BYTES = 2 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
@@ -27,15 +33,44 @@ export interface SourceNetwork {
   publishOrigins: string[];
 }
 
+export interface SourceCatalogCapabilities {
+  categories?: boolean;
+  tags?: boolean;
+  rankings?: boolean;
+  authors?: boolean;
+}
+
+export interface SourceDetailCapabilities {
+  episodes?: boolean;
+  related?: boolean;
+  comments?: boolean;
+}
+
+export interface SourcePlaybackCapabilities {
+  hls?: boolean;
+  mp4?: boolean;
+  subtitles?: boolean;
+}
+
 export interface SourceCapabilities {
   home?: boolean;
   search?: boolean;
-  catalog?: Object;
-  detail?: Object;
-  playback?: Object;
+  catalog?: SourceCatalogCapabilities;
+  detail?: SourceDetailCapabilities;
+  playback?: SourcePlaybackCapabilities;
   posts?: boolean;
   account?: boolean;
   lines?: boolean;
+}
+
+export interface SourceImageDecrypt {
+  algorithm: string;
+  key: string;
+  iv: string;
+}
+
+export interface SourceMedia {
+  imageDecrypt?: SourceImageDecrypt;
 }
 
 export interface SourceManifest {
@@ -44,10 +79,30 @@ export interface SourceManifest {
   name: string;
   version: string;
   apiVersion: string;
+  description?: string;
+  author?: string;
   runtime: SourceRuntime;
-  capabilities?: SourceCapabilities;
   network?: SourceNetwork;
+  capabilities?: SourceCapabilities;
+  media?: SourceMedia;
+  catalog?: Object;
+  links?: Object;
   updateUrls?: string[];
+}
+
+export interface SourceSignature {
+  algorithm: string;
+  keyId: string;
+  publicKey?: string;
+  sig: string;
+}
+
+export interface SourcePackage {
+  schemaVersion: number;
+  manifest: SourceManifest;
+  code: string;
+  updateUrls: string[];
+  signature?: SourceSignature;
 }
 
 export interface SourceDescriptor {
@@ -56,6 +111,9 @@ export interface SourceDescriptor {
   version: string;
   trusted: boolean;
   updatedAt: number;
+  signatureStatus?: string;
+  signatureKeyId?: string;
+  signatureFingerprint?: string;
 }
 
 export interface SourceActive {
@@ -69,31 +127,43 @@ export interface SourceState {
   pilot: boolean;
   activeId: string | null;
   previousId: string | null;
+  allowUntrusted: boolean;
   installed: SourceDescriptor[];
 }
 
 export interface SourceUpdateResult {
   updated: string;
   reason: string;
+  fromVersion?: string;
+  toVersion?: string;
+}
+
+interface SourceSettings {
+  allowUntrusted: boolean;
+}
+
+interface Semver {
+  major: number;
+  minor: number;
+  patch: number;
 }
 
 /**
- * P2/P3a pilot source package store.
+ * P3b source package store.
  *
- * P3a 落实上游 source contract 的 host 原语和安全边界：
- * - QuickJS 原生线程只拿到内存/栈/中断超时和通用 host 桥；
- * - host.fetch 白名单、HTML 只读查询、crypto、per-source storage 都在 ArkTS 侧；
- * - 内置 offline demo 仍是唯一信任源。
- *
- * P3b 仍未做：非信任包导入、Ed25519 验签、分享口令、updateUrls 真实更新检查。
+ * 包格式对齐上游 SourcePackage：{schemaVersion, manifest, code, updateUrls, signature?}。
+ * 签名包必须通过 Ed25519 验签；无签名 / 自签包受 allowUntrusted 控制。
+ * 导入和 updateUrls 更新都会先在 QuickJS 里跑 init()，通过后才落盘。
  */
 export class SourceManager {
   private context: common.UIAbilityContext;
   private root: string;
+  private allowUntrusted: boolean = true;
 
   constructor(context: common.UIAbilityContext) {
     this.context = context;
     this.root = context.filesDir + '/' + SOURCE_ROOT;
+    this.allowUntrusted = this.readSettings().allowUntrusted;
   }
 
   state(): SourceState {
@@ -104,8 +174,17 @@ export class SourceManager {
       pilot: true,
       activeId: active.activeId,
       previousId: active.previousId,
+      allowUntrusted: this.allowUntrusted,
       installed: installed
     };
+  }
+
+  setAllowUntrusted(allow: boolean): SourceState {
+    this.allowUntrusted = allow;
+    const settings: SourceSettings = { allowUntrusted: allow };
+    this.ensureDir(this.root);
+    this.writeText(this.root + '/settings.json', JSON.stringify(settings));
+    return this.state();
   }
 
   importDemo(): Promise<void> {
@@ -122,33 +201,30 @@ export class SourceManager {
     if (sourceText.trim().length === 0) {
       throw new Error('source.js is empty');
     }
-    const dir = this.packageDir(manifest.id);
-    this.ensureDir(dir);
-    this.writeText(dir + '/manifest.json', manifestText);
-    this.writeText(dir + '/source.js', sourceText);
-
-    const descriptor: SourceDescriptor = {
-      id: manifest.id,
-      name: manifest.name,
-      version: manifest.version,
-      trusted: trusted,
-      updatedAt: Date.now()
+    const pkg = this.packageFromManifest(manifest, sourceText);
+    const signature: SourceSignatureInfo = {
+      status: trusted ? 'trusted' : 'unsigned',
+      keyId: '',
+      fingerprint: ''
     };
-    const index = this.readIndex();
-    let replaced = false;
-    for (let i = 0; i < index.length; i++) {
-      if (index[i].id === descriptor.id) {
-        index[i] = descriptor;
-        replaced = true;
-        break;
-      }
+    return this.installPackage(pkg, signature, trusted, false);
+  }
+
+  async importInput(input: string, activate: boolean): Promise<SourceDescriptor> {
+    const raw = await this.resolveInput(input);
+    const pkg = await this.decodePackageInput(raw);
+    this.validatePackage(pkg);
+    const signature = verifyPackage(pkg);
+    if (!this.allowUntrusted && signature.status !== 'trusted') {
+      throw new Error('当前未允许导入未受信任视频源');
     }
-    if (!replaced) {
-      index.push(descriptor);
-    }
-    this.writeIndex(index);
-    hilog.info(0x0000, TAG, 'source import ok id=%{public}s trusted=%{public}s', descriptor.id, String(trusted));
-    return descriptor;
+    await this.smokeTestPackage(pkg);
+    return this.installPackage(pkg, signature, signature.status === 'trusted', activate);
+  }
+
+  async exportShareCode(id: string): Promise<string> {
+    const pkg = this.readPackage(id);
+    return encodeShareCode(JSON.stringify(pkg));
   }
 
   activate(id: string): SourceState {
@@ -204,6 +280,7 @@ export class SourceManager {
     const dir = this.packageDir(id);
     this.removeFile(dir + '/manifest.json');
     this.removeFile(dir + '/source.js');
+    this.removeFile(dir + '/package.json');
     this.removeFile(dir + '/storage.json');
     try {
       fileIo.rmdirSync(dir);
@@ -224,64 +301,71 @@ export class SourceManager {
     if (!this.validId(id)) {
       return Promise.reject(new Error('invalid source id'));
     }
-    const manifestPath = this.packageDir(id) + '/manifest.json';
-    const sourcePath = this.packageDir(id) + '/source.js';
-    if (!this.exists(manifestPath) || !this.exists(sourcePath)) {
-      return Promise.reject(new Error('source package is not installed'));
+    let pkg: SourcePackage;
+    try {
+      pkg = this.readPackage(id);
+    } catch (err) {
+      return Promise.reject(err as Error);
     }
-    const manifest = this.parseManifest(this.readText(manifestPath));
-    const sourceText = this.readText(sourcePath);
-    const context = this.hostContext(manifest);
-    const script = [
-      hostPrelude(),
-      'var __manifest = ' + JSON.stringify(manifest) + ';',
-      'var module = { exports: {} };',
-      'var exports = module.exports;',
-      sourceText,
-      "var required = ['init', 'home', 'search', 'tags', 'hotTags', 'tagVideos', 'detail', 'playback'];",
-      "for (var i = 0; i < required.length; i++) { if (typeof module.exports[required[i]] !== 'function') { throw new Error('missing source export: ' + required[i]); } }",
-      'var __out = {',
-      '  id: __manifest.id,',
-      '  init: module.exports.init(),',
-      '  home: module.exports.home({ page: 1, size: 2 }),',
-      '  detail: module.exports.detail({ id: 90001 }),',
-      '  playback: module.exports.playback({ id: 90001, ep: 1 })',
-      '};',
-      'JSON.stringify(__out);'
-    ].join('\n');
-    const session = new SourceHostSession(context, this);
-    return quickjsSpike
-      .evaluateAsync(script, (requestId: number, request: string): void => {
-        this.dispatchHost(session, requestId, request);
-      }, JSON.stringify(context))
-      .then((result: string) => {
-        session.close();
-        return result;
-      })
-      .catch((err: Error) => {
-        session.close();
-        throw err;
-      });
+    return this.testPackage(pkg);
   }
 
-  checkUpdate(id: string): SourceUpdateResult {
+  async checkUpdate(id: string): Promise<SourceUpdateResult> {
     if (!this.validId(id)) {
-      const invalid: SourceUpdateResult = { updated: 'false', reason: 'invalid source id' };
-      return invalid;
+      return { updated: 'false', reason: 'invalid source id' };
     }
-    const manifestPath = this.packageDir(id) + '/manifest.json';
-    if (!this.exists(manifestPath)) {
-      const missing: SourceUpdateResult = { updated: 'false', reason: 'source not installed' };
-      return missing;
+    let current: SourcePackage;
+    try {
+      current = this.readPackage(id);
+    } catch (err) {
+      return { updated: 'false', reason: 'source not installed' };
     }
-    const manifest = this.parseManifest(this.readText(manifestPath));
-    const updateUrls = manifest.updateUrls;
-    if (updateUrls === undefined || !Array.isArray(updateUrls) || updateUrls.length === 0) {
-      const noUrls: SourceUpdateResult = { updated: 'false', reason: 'no update urls' };
-      return noUrls;
+    const urls = current.updateUrls;
+    if (urls.length === 0) {
+      return { updated: 'false', reason: 'no update urls' };
     }
-    const disabled: SourceUpdateResult = { updated: 'false', reason: 'pilot update check disabled (P3b)' };
-    return disabled;
+    const fromVersion = current.manifest.version;
+    let lastError = '所有更新链接均不可用';
+    for (const url of urls) {
+      try {
+        const raw = await this.fetchRemoteText(url);
+        const candidate = await this.decodePackageInput(raw);
+        if (candidate.manifest.id !== id) {
+          lastError = '远程视频源 id 与当前源不一致，已拒绝覆盖';
+          continue;
+        }
+        this.validatePackage(candidate);
+        const signature = verifyPackage(candidate);
+        if (!this.allowUntrusted && signature.status !== 'trusted') {
+          lastError = '当前未允许导入未受信任视频源';
+          continue;
+        }
+        if (!this.isNewerVersion(candidate.manifest.version, fromVersion)) {
+          return {
+            updated: 'false',
+            reason: 'no newer version',
+            fromVersion: fromVersion,
+            toVersion: fromVersion
+          };
+        }
+        await this.smokeTestPackage(candidate);
+        this.installPackage(candidate, signature, signature.status === 'trusted', false);
+        return {
+          updated: 'true',
+          reason: 'updated',
+          fromVersion: fromVersion,
+          toVersion: candidate.manifest.version
+        };
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+      }
+    }
+    return {
+      updated: 'false',
+      reason: lastError,
+      fromVersion: fromVersion,
+      toVersion: fromVersion
+    };
   }
 
   async hostPilotCheck(): Promise<string> {
@@ -341,6 +425,33 @@ export class SourceManager {
     }
   }
 
+  async packagePilotCheck(): Promise<string> {
+    const packageText = await this.readRawFile('quickjs/p3b-signed/package.json');
+    const shareText = await this.readRawFile('quickjs/p3b-signed/share.txt');
+    const pkg = JSON.parse(packageText) as SourcePackage;
+    this.validatePackage(pkg);
+    const signature = verifyPackage(pkg);
+    const shareJson = await decodeShareCode(shareText.trim());
+    const shared = JSON.parse(shareJson) as SourcePackage;
+    const shareOk = canonicalPayload(pkg) === canonicalPayload(shared);
+    let tamperRejected = false;
+    try {
+      const tamperedText = await this.readRawFile('quickjs/p3b-signed/tampered.json');
+      const tampered = JSON.parse(tamperedText) as SourcePackage;
+      verifyPackage(tampered);
+    } catch (err) {
+      tamperRejected = true;
+    }
+    const result: Record<string, Object> = {};
+    result['id'] = pkg.manifest.id;
+    result['sigStatus'] = signature.status;
+    result['keyId'] = signature.keyId;
+    result['fingerprint'] = signature.fingerprint;
+    result['shareOk'] = shareOk;
+    result['tamperRejected'] = tamperRejected;
+    return JSON.stringify(result);
+  }
+
   storageGet(sourceId: string, key: string): string | null {
     if (!this.validId(sourceId) || key.length === 0 || key.length > 128) {
       return null;
@@ -376,7 +487,7 @@ export class SourceManager {
       this.writeStorageMap(sourceId, next);
       return;
     }
-    if (byteLength(value) > MAX_STORAGE_VALUE_BYTES) {
+    if (textByteLength(value) > MAX_STORAGE_VALUE_BYTES) {
       throw new Error('source storage value exceeds 32 KB');
     }
     if (map[key] === undefined && Object.keys(map).length >= MAX_STORAGE_KEYS) {
@@ -392,6 +503,282 @@ export class SourceManager {
     }).catch((err: Error) => {
       quickjsSpike.resolveHost(id, JSON.stringify({ __hostError: err.message }));
     });
+  }
+
+  private async resolveInput(input: string): Promise<string> {
+    const trimmed = input.trim();
+    if (trimmed.length === 0) {
+      throw new Error('请输入视频源口令、JSON 内容或 HTTPS 链接');
+    }
+    if (trimmed.startsWith('hghubx-src://') || trimmed.startsWith('{')) {
+      return trimmed;
+    }
+    const deepLink = this.parseDeepLink(trimmed);
+    if (deepLink !== null) {
+      return this.resolveInput(deepLink);
+    }
+    if (trimmed.startsWith('https://')) {
+      return this.fetchRemoteText(trimmed);
+    }
+    if (trimmed.indexOf('.') > 0 && trimmed.indexOf(' ') < 0) {
+      return this.fetchRemoteText('https://' + trimmed);
+    }
+    throw new Error('无法识别的格式：请粘贴 hghubx-src:// 口令、JSON 文本或 https:// 链接');
+  }
+
+  private parseDeepLink(raw: string): string | null {
+    if (!raw.toLowerCase().startsWith('hghubx://')) {
+      return null;
+    }
+    const query = raw.indexOf('?');
+    if (query < 0) {
+      return null;
+    }
+    const pairs = raw.substring(query + 1).split('&');
+    for (const pair of pairs) {
+      const eq = pair.indexOf('=');
+      if (eq <= 0) {
+        continue;
+      }
+      const key = pair.substring(0, eq);
+      const value = pair.substring(eq + 1);
+      if ((key === 'url' || key === 'src' || key === 'code') && value.length > 0) {
+        return decodeURIComponent(value);
+      }
+    }
+    return null;
+  }
+
+  private async fetchRemoteText(url: string): Promise<string> {
+    if (!isPublicHttpsUrl(url)) {
+      throw new Error('远程视频源必须是 HTTPS 公网地址');
+    }
+    const response = await httpRequest(url, 'GET', '{}', '', true, 15000);
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error('拉取远程视频源失败（HTTP ' + response.status + '）');
+    }
+    const text = new util.TextDecoder().decode(new Uint8Array(response.bytes));
+    if (textByteLength(text) > MAX_PACKAGE_BYTES) {
+      throw new Error('远程视频源超出大小上限（最大 512 KB）');
+    }
+    return text;
+  }
+
+  private async decodePackageInput(raw: string): Promise<SourcePackage> {
+    const trimmed = raw.trim();
+    if (trimmed.startsWith('hghubx-src://')) {
+      const json = await decodeShareCode(trimmed);
+      return JSON.parse(json) as SourcePackage;
+    }
+    if (trimmed.startsWith('{')) {
+      if (textByteLength(trimmed) > MAX_PACKAGE_BYTES) {
+        throw new Error('视频源 JSON 超出大小上限（最大 512 KB）');
+      }
+      return JSON.parse(trimmed) as SourcePackage;
+    }
+    throw new Error('无法识别的视频源格式');
+  }
+
+  private validatePackage(pkg: SourcePackage): void {
+    if (pkg.schemaVersion !== 1 || pkg.manifest.schemaVersion !== 1) {
+      throw new Error('不支持的视频源格式版本');
+    }
+    if (pkg.manifest.apiVersion.trim() !== '1') {
+      throw new Error('不兼容的视频源契约版本');
+    }
+    if (!this.validPackageId(pkg.manifest.id)) {
+      throw new Error('视频源 id 无效：仅允许 3~96 位小写字母、数字、点、横杠或下划线');
+    }
+    const semver = this.parseSemver(pkg.manifest.version);
+    if (semver === null || pkg.manifest.version.length > 32 ||
+        pkg.manifest.version.indexOf('..') >= 0 ||
+        pkg.manifest.version.indexOf('/') >= 0 ||
+        pkg.manifest.version.indexOf('\\') >= 0) {
+      throw new Error('视频源版本号必须符合语义化版本（如 1.0.0）');
+    }
+    const name = pkg.manifest.name.trim();
+    if (name.length === 0 || name.length > 80 || name.indexOf('<') >= 0 || name.indexOf('>') >= 0) {
+      throw new Error('视频源名称无效（不能为空、不超过 80 字符且不含 HTML 标签）');
+    }
+    if (pkg.manifest.runtime.kind !== 'quickjs') {
+      throw new Error('不支持的运行环境：' + pkg.manifest.runtime.kind);
+    }
+    const entry = pkg.manifest.runtime.entry;
+    if (entry !== 'inline' && entry !== 'source.js') {
+      throw new Error('runtime.entry 必须是 inline 或 source.js');
+    }
+    if (entry.indexOf('..') >= 0 || entry.startsWith('/') || entry.startsWith('\\')) {
+      throw new Error('runtime.entry 包含非法路径');
+    }
+    const caps = pkg.manifest.capabilities;
+    if (caps === undefined || caps.search !== true || caps.detail === undefined || caps.detail.episodes !== true) {
+      throw new Error('视频源缺少必选核心能力（需要 search、detail.episodes 与 playback）');
+    }
+    const playback = caps.playback;
+    const hasPlayback = playback !== undefined && (playback.hls === true || playback.mp4 === true);
+    const network = this.packageNetwork(pkg);
+    const offlineDemo = network.origins.length === 0 && network.mediaOrigins.length === 0 && network.publishOrigins.length === 0;
+    if (!hasPlayback && !offlineDemo) {
+      throw new Error('视频源缺少必选核心能力（需要 search、detail.episodes 与 playback）');
+    }
+    if (pkg.code.trim().length === 0) {
+      throw new Error('视频源脚本 code 不能为空');
+    }
+    if (textByteLength(pkg.code) > MAX_CODE_BYTES) {
+      throw new Error('视频源脚本超出大小上限（最大 256 KB）');
+    }
+    this.validateOrigins('network.origins', network.origins, MAX_ORIGINS);
+    this.validateOrigins('network.mediaOrigins', network.mediaOrigins, MAX_ORIGINS);
+    this.validateOrigins('network.publishOrigins', network.publishOrigins, MAX_ORIGINS);
+    this.validateOrigins('updateUrls', pkg.updateUrls, MAX_UPDATE_URLS);
+  }
+
+  private validateOrigins(label: string, values: string[], max: number): void {
+    if (values.length > max) {
+      throw new Error(label + ' 数量超出限制');
+    }
+    for (const value of values) {
+      if (!isPublicHttpsUrl(value)) {
+        throw new Error(label + ' 必须是 HTTPS 公网地址');
+      }
+    }
+  }
+
+  private async smokeTestPackage(pkg: SourcePackage): Promise<void> {
+    const script = this.buildPackageScript(pkg, true);
+    await this.runPackageScript(pkg, script);
+  }
+
+  private testPackage(pkg: SourcePackage): Promise<string> {
+    return this.runPackageScript(pkg, this.buildPackageScript(pkg, false));
+  }
+
+  private buildPackageScript(pkg: SourcePackage, smokeOnly: boolean): string {
+    const lines: string[] = [
+      hostPrelude(),
+      'var __manifest = ' + JSON.stringify(pkg.manifest) + ';',
+      'var module = { exports: {} };',
+      'var exports = module.exports;',
+      pkg.code,
+      "var required = ['init', 'home', 'search', 'tags', 'hotTags', 'tagVideos', 'detail', 'playback'];",
+      "for (var i = 0; i < required.length; i++) { if (typeof module.exports[required[i]] !== 'function') { throw new Error('missing source export: ' + required[i]); } }"
+    ];
+    if (smokeOnly) {
+      lines.push('JSON.stringify({ id: __manifest.id, init: module.exports.init({}) });');
+    } else {
+      lines.push('var __out = {');
+      lines.push('  id: __manifest.id,');
+      lines.push('  init: module.exports.init(),');
+      lines.push('  home: module.exports.home({ page: 1, size: 2 }),');
+      lines.push('  detail: module.exports.detail({ id: 90001 }),');
+      lines.push('  playback: module.exports.playback({ id: 90001, ep: 1 })');
+      lines.push('};');
+      lines.push('JSON.stringify(__out);');
+    }
+    return lines.join('\n');
+  }
+
+  private runPackageScript(pkg: SourcePackage, script: string): Promise<string> {
+    const context = this.hostContext(pkg.manifest);
+    const session = new SourceHostSession(context, this);
+    return quickjsSpike
+      .evaluateAsync(script, (requestId: number, request: string): void => {
+        this.dispatchHost(session, requestId, request);
+      }, JSON.stringify(context))
+      .then((result: string) => {
+        session.close();
+        return result;
+      })
+      .catch((err: Error) => {
+        session.close();
+        throw err;
+      });
+  }
+
+  private installPackage(pkg: SourcePackage, signature: SourceSignatureInfo, trusted: boolean, activate: boolean): SourceDescriptor {
+    const manifest = pkg.manifest;
+    const network = this.packageNetwork(pkg);
+    manifest.network = network;
+    const dir = this.packageDir(manifest.id);
+    this.ensureDir(dir);
+    this.writeText(dir + '/package.json', JSON.stringify(pkg));
+    this.writeText(dir + '/manifest.json', JSON.stringify(manifest));
+    this.writeText(dir + '/source.js', pkg.code);
+
+    const descriptor: SourceDescriptor = {
+      id: manifest.id,
+      name: manifest.name,
+      version: manifest.version,
+      trusted: trusted,
+      updatedAt: Date.now(),
+      signatureStatus: signature.status,
+      signatureKeyId: signature.keyId,
+      signatureFingerprint: signature.fingerprint
+    };
+    const index = this.readIndex();
+    let replaced = false;
+    for (let i = 0; i < index.length; i++) {
+      if (index[i].id === descriptor.id) {
+        index[i] = descriptor;
+        replaced = true;
+        break;
+      }
+    }
+    if (!replaced) {
+      index.push(descriptor);
+    }
+    this.writeIndex(index);
+    if (activate) {
+      const active = this.readActive();
+      const next: SourceActive = {
+        activeId: descriptor.id,
+        previousId: active.activeId === descriptor.id ? active.previousId : active.activeId,
+        updatedAt: Date.now()
+      };
+      this.writeActive(next);
+    }
+    hilog.info(0x0000, TAG, 'source install ok id=%{public}s version=%{public}s sig=%{public}s',
+      descriptor.id, descriptor.version, signature.status);
+    return descriptor;
+  }
+
+  private packageFromManifest(manifest: SourceManifest, code: string): SourcePackage {
+    manifest.network = this.manifestNetwork(manifest);
+    const updateUrls = manifest.updateUrls !== undefined ? stringArray(manifest.updateUrls, MAX_UPDATE_URLS) : [];
+    const pkg: SourcePackage = {
+      schemaVersion: 1,
+      manifest: manifest,
+      code: code,
+      updateUrls: updateUrls
+    };
+    return pkg;
+  }
+
+  private readPackage(id: string): SourcePackage {
+    if (!this.validId(id)) {
+      throw new Error('invalid source id');
+    }
+    const dir = this.packageDir(id);
+    const packagePath = dir + '/package.json';
+    if (this.exists(packagePath)) {
+      const pkg = JSON.parse(this.readText(packagePath)) as SourcePackage;
+      pkg.manifest.network = this.packageNetwork(pkg);
+      if (!Array.isArray(pkg.updateUrls)) {
+        pkg.updateUrls = [];
+      }
+      return pkg;
+    }
+    const manifestPath = dir + '/manifest.json';
+    const sourcePath = dir + '/source.js';
+    if (!this.exists(manifestPath) || !this.exists(sourcePath)) {
+      throw new Error('source package is not installed');
+    }
+    const manifest = this.parseManifest(this.readText(manifestPath));
+    return this.packageFromManifest(manifest, this.readText(sourcePath));
+  }
+
+  private packageNetwork(pkg: SourcePackage): SourceNetwork {
+    return this.manifestNetwork(pkg.manifest);
   }
 
   private hostContext(manifest: SourceManifest): SourceHostContext {
@@ -440,21 +827,54 @@ export class SourceManager {
     if (manifest.apiVersion !== '1') {
       throw new Error('manifest apiVersion must be 1');
     }
-    if (manifest.runtime === undefined || manifest.runtime.kind !== 'quickjs' || manifest.runtime.entry !== 'source.js') {
+    if (manifest.runtime === undefined || manifest.runtime.kind !== 'quickjs' ||
+        (manifest.runtime.entry !== 'source.js' && manifest.runtime.entry !== 'inline')) {
       throw new Error('manifest runtime must be quickjs/source.js');
     }
     if (manifest.capabilities === undefined) {
       throw new Error('manifest capabilities is required');
     }
-    const network = this.manifestNetwork(manifest);
-    if (network.origins.length + network.mediaOrigins.length + network.publishOrigins.length > MAX_ORIGINS) {
-      throw new Error('manifest network origins exceed the limit');
-    }
+    manifest.network = this.manifestNetwork(manifest);
     return manifest;
   }
 
   private validId(id: string): boolean {
     return id.length > 0 && id.length <= 128 && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id) && id.indexOf('..') < 0;
+  }
+
+  private validPackageId(id: string): boolean {
+    return id.length >= 3 && id.length <= 96 && /^[a-z0-9][a-z0-9._-]*$/.test(id) && id.indexOf('..') < 0;
+  }
+
+  private parseSemver(version: string): Semver | null {
+    const core = version.trim().split('-')[0];
+    const parts = core.split('.');
+    if (parts.length !== 3) {
+      return null;
+    }
+    const major = Number(parts[0]);
+    const minor = Number(parts[1]);
+    const patch = Number(parts[2]);
+    if (!Number.isInteger(major) || !Number.isInteger(minor) || !Number.isInteger(patch)) {
+      return null;
+    }
+    const semver: Semver = { major: major, minor: minor, patch: patch };
+    return semver;
+  }
+
+  private isNewerVersion(candidate: string, current: string): boolean {
+    const a = this.parseSemver(candidate);
+    const b = this.parseSemver(current);
+    if (a === null || b === null) {
+      return false;
+    }
+    if (a.major !== b.major) {
+      return a.major > b.major;
+    }
+    if (a.minor !== b.minor) {
+      return a.minor > b.minor;
+    }
+    return a.patch > b.patch;
   }
 
   private packageDir(id: string): string {
@@ -503,6 +923,19 @@ export class SourceManager {
   private writeActive(active: SourceActive): void {
     this.ensureDir(this.root);
     this.writeText(this.root + '/active.json', JSON.stringify(active));
+  }
+
+  private readSettings(): SourceSettings {
+    const path = this.root + '/settings.json';
+    if (!this.exists(path)) {
+      return { allowUntrusted: true };
+    }
+    try {
+      const settings = JSON.parse(this.readText(path)) as SourceSettings;
+      return { allowUntrusted: settings.allowUntrusted !== false };
+    } catch (e) {
+      return { allowUntrusted: true };
+    }
   }
 
   private readStorageMap(sourceId: string): Record<string, string> {
@@ -579,13 +1012,12 @@ export class SourceManager {
   }
 }
 
-function stringArray(value: Object | undefined, max: number): string[] {
+function stringArray(value: string[] | undefined, max: number): string[] {
   const out: string[] = [];
   if (value === undefined || value === null || !Array.isArray(value)) {
     return out;
   }
-  const raw = value as string[];
-  for (const item of raw) {
+  for (const item of value) {
     if (typeof item === 'string' && item.length > 0) {
       out.push(item);
     }
@@ -616,6 +1048,6 @@ function uniqueStrings(values: string[], max: number): string[] {
   return out;
 }
 
-function byteLength(text: string): number {
+function textByteLength(text: string): number {
   return new util.TextEncoder().encodeInto(text).byteLength;
 }

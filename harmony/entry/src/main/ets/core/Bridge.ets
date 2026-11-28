@@ -245,12 +245,42 @@ export class Bridge {
     }
   }
 
-  sourceCheckUpdate(reqId: string, id: string): void {
+  sourceImport(reqId: string, input: string, activate: boolean): void {
+    this.sourceManager.importInput(input, activate)
+      .then((descriptor) => {
+        this.reply(reqId, true, JSON.stringify(descriptor));
+      })
+      .catch((err: Error) => {
+        this.reply(reqId, false, err.message);
+      });
+  }
+
+  sourceExportShareCode(reqId: string, id: string): void {
+    this.sourceManager.exportShareCode(id)
+      .then((shareCode: string) => {
+        this.reply(reqId, true, JSON.stringify(shareCode));
+      })
+      .catch((err: Error) => {
+        this.reply(reqId, false, err.message);
+      });
+  }
+
+  sourceSetAllowUntrusted(reqId: string, allow: boolean): void {
     try {
-      this.reply(reqId, true, JSON.stringify(this.sourceManager.checkUpdate(id)));
+      this.reply(reqId, true, JSON.stringify(this.sourceManager.setAllowUntrusted(allow)));
     } catch (err) {
       this.reply(reqId, false, (err as Error).message);
     }
+  }
+
+  sourceCheckUpdate(reqId: string, id: string): void {
+    this.sourceManager.checkUpdate(id)
+      .then((result) => {
+        this.reply(reqId, true, JSON.stringify(result));
+      })
+      .catch((err: Error) => {
+        this.reply(reqId, false, err.message);
+      });
   }
 
   /** 网络快照：给前端 net_diag 用（默认网络、承载类型、DNS、链路地址） */

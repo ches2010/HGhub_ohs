@@ -446,6 +446,10 @@ function isPublicIpv4(host: string): boolean {
   return true;
 }
 
+export function isPublicHttpsUrl(url: string): boolean {
+  return parseHttpsUrl(url) !== null;
+}
+
 function originAllowed(targetOrigin: string, allowed: string[]): boolean {
   if (allowed.length === 0) {
     return false;

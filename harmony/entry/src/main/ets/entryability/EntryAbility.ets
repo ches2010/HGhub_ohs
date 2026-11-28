@@ -39,6 +39,14 @@ export default class EntryAbility extends UIAbility {
       .then((hostResult: string) => {
         const head: string = hostResult.length > 240 ? hostResult.substring(0, 240) : hostResult;
         hilog.info(0x0000, TAG, 'source host pilot: %{public}s', head);
+        return manager.packagePilotCheck()
+          .then((packageResult: string) => {
+            const packageHead: string = packageResult.length > 240 ? packageResult.substring(0, 240) : packageResult;
+            hilog.info(0x0000, TAG, 'source package pilot: %{public}s', packageHead);
+          })
+          .catch((err: Error) => {
+            hilog.error(0x0000, TAG, 'source package pilot failed: %{public}s', err.message);
+          });
       })
       .catch((err: Error) => {
         hilog.error(0x0000, TAG, 'source pilot failed: %{public}s', err.message);

@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "manifest": {
+    "schemaVersion": 1,
+    "id": "com.hghubx.demo-signed",
+    "name": "P3B 签名示例源",
+    "version": "1.0.0",
+    "apiVersion": "1",
+    "description": "",
+    "author": "HGhubX",
+    "runtime": {
+      "kind": "quickjs",
+      "entry": "inline"
+    },
+    "network": {
+      "origins": [],
+      "mediaOrigins": [],
+      "publishOrigins": []
+    },
+    "capabilities": {
+      "home": true,
+      "search": true,
+      "catalog": {
+        "categories": false,
+        "tags": true,
+        "rankings": false,
+        "authors": false
+      },
+      "detail": {
+        "episodes": true,
+        "related": false,
+        "comments": false
+      },
+      "playback": {
+        "hls": false,
+        "mp4": false,
+        "subtitles": false
+      },
+      "posts": false,
+      "account": false,
+      "lines": false
+    }
+  },
+  "code": "// Zero-network offline demo source for UI preview without media playback.\n\nconst BLACK_COVER = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(\n  '<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 360 480\"><rect width=\"360\" height=\"480\" fill=\"#000000\"/></svg>',\n)}`;\n\nconst CATALOG = [\n  {\n    id: 90001,\n    title: \"示例视频 1\",\n    cover: BLACK_COVER,\n    tags: [\"示例\", \"都市\"],\n    score: 9.6,\n    episode_count: 12,\n    total_episodes: 12,\n    hot: 128000,\n    like_count: 3200,\n    collect_count: 1850,\n    comment_count: 42,\n    is_finished: true,\n    is_original: 1,\n    description: \"\",\n    author: { id: 1, name: \"示例作者\" },\n  },\n  {\n    id: 90002,\n    title: \"示例视频 2\",\n    cover: BLACK_COVER,\n    tags: [\"示例\", \"科幻\"],\n    score: 9.1,\n    episode_count: 8,\n    total_episodes: 8,\n    hot: 86000,\n    like_count: 1900,\n    collect_count: 920,\n    comment_count: 18,\n    is_finished: true,\n    is_original: 0,\n    description: \"\",\n    author: { id: 1, name: \"示例作者\" },\n  },\n];\n\nconst HOT_TAGS = [\n  { name: \"示例\", slug: \"demo\" },\n  { name: \"都市\", slug: \"dushi\" },\n  { name: \"科幻\", slug: \"scifi\" },\n];\n\nfunction buildTagCategories() {\n  const tags = HOT_TAGS.map((item, idx) => ({\n    id: idx + 1,\n    name: item.name,\n    slug: item.slug,\n    video_count: CATALOG.filter((v) => v.tags.includes(item.name)).length,\n  }));\n  return [{ id: 1, name: \"示例标签\", tags }];\n}\n\nmodule.exports = {\n  init() {\n    return { ok: true, offline: true, demo: true, items: CATALOG.length };\n  },\n  home({ page = 1, size = 20 }) {\n    return {\n      items: page === 1 ? CATALOG : [],\n      pagination: { page, pages: 1, size, total: CATALOG.length },\n    };\n  },\n  search({ q = \"\", page = 1, size = 20 }) {\n    const kw = String(q).trim().toLowerCase();\n    const items = kw\n      ? CATALOG.filter(\n          (it) =>\n            it.title.toLowerCase().includes(kw) ||\n            it.tags.some((t) => t.toLowerCase().includes(kw)),\n        )\n      : CATALOG;\n    return {\n      items: page === 1 ? items : [],\n      pagination: { page, pages: 1, size, total: items.length },\n      keyword: q,\n    };\n  },\n  tags() {\n    return { categories: buildTagCategories() };\n  },\n  hotTags() {\n    return { items: HOT_TAGS };\n  },\n  tagVideos({ tag = \"\", page = 1, size = 20 }) {\n    const key = String(tag).trim().toLowerCase();\n    const items = key\n      ? CATALOG.filter((it) => it.tags.some((t) => t.toLowerCase() === key))\n      : CATALOG;\n    return {\n      items: page === 1 ? items : [],\n      pagination: { page, pages: 1, size, total: items.length },\n    };\n  },\n  detail({ id }) {\n    const found = CATALOG.find((x) => x.id === Number(id)) || CATALOG[0];\n    return {\n      ...found,\n      counts: {\n        like: found.like_count,\n        collect: found.collect_count,\n        comment: found.comment_count,\n        hot: found.hot,\n      },\n      episodes: Array.from({ length: found.total_episodes }, (_, idx) => ({\n        ep_num: idx + 1,\n        title: `第 ${idx + 1} 集`,\n        duration: 90,\n        status: 1,\n      })),\n    };\n  },\n  playback({ id, ep }) {\n    const found = CATALOG.find((x) => x.id === Number(id)) || CATALOG[0];\n    return {\n      id: String(found.id),\n      ep: ep || 1,\n      title: `${found.title} · 第 ${ep || 1} 集`,\n      video_url: \"\",\n    };\n  },\n};\n\n// tampered\n",
+  "updateUrls": [],
+  "signature": {
+    "algorithm": "ed25519",
+    "keyId": "p3b-demo",
+    "publicKey": "IhH3q5GCutAYfMwzeCkSe5rEebMrf0-7ygSi2dRbLko",
+    "sig": "Iax6OKV1Ez4_sPH4KTiOTypsa60J6wVhnlPRhGpeLSuYNrb1p2P8RHTPi-tTtwyi3Et6txDUtH93KvDEke2RDQ"
+  }
+}

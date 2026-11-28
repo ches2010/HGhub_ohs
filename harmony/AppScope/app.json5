@@ -2,8 +2,8 @@
   "app": {
     "bundleName": "com.hghubx.harmony",
     "vendor": "hghubx",
-    "versionCode": 2002018,
-    "versionName": "2.2.10-p3a",
+    "versionCode": 2002019,
+    "versionName": "2.2.10-p3b",
     "icon": "$media:app_icon",
     "label": "$string:app_name"
   }
