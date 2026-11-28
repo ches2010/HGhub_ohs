@@ -6,7 +6,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { httpRequest } from './Http';
 import quickjsSpike from 'libquickjs_spike.so';
 import { SourceHostContext, SourceHostInfo, SourceHostSession, hostPrelude, isPublicHttpsUrl } from './SourceHost';
-import { canonicalPayload, SourceSignatureInfo, verifyPackage } from './SourceVerify';
+import { canonicalPayload, SourceSignatureInfo, verifyPackage, VerifiablePackage, VerifyImageDecrypt, VerifyManifest, VerifyMedia, VerifyNetwork, VerifyRuntime, VerifySignature } from './SourceVerify';
 import { decodeShareCode, encodeShareCode } from './SourceShare';
 
 const TAG: string = 'HGhubX';
@@ -22,15 +22,10 @@ const SOURCE_TIMEOUT_MS = 12000;
 const MAX_HTML_BYTES = 2 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
-export interface SourceRuntime {
-  kind: string;
-  entry: string;
+export interface SourceRuntime extends VerifyRuntime {
 }
 
-export interface SourceNetwork {
-  origins: string[];
-  mediaOrigins: string[];
-  publishOrigins: string[];
+export interface SourceNetwork extends VerifyNetwork {
 }
 
 export interface SourceCatalogCapabilities {
@@ -63,45 +58,29 @@ export interface SourceCapabilities {
   lines?: boolean;
 }
 
-export interface SourceImageDecrypt {
-  algorithm: string;
-  key: string;
-  iv: string;
+export interface SourceImageDecrypt extends VerifyImageDecrypt {
 }
 
-export interface SourceMedia {
+export interface SourceMedia extends VerifyMedia {
   imageDecrypt?: SourceImageDecrypt;
 }
 
-export interface SourceManifest {
+export interface SourceManifest extends VerifyManifest {
   schemaVersion: number;
-  id: string;
   name: string;
-  version: string;
-  apiVersion: string;
   description?: string;
   author?: string;
-  runtime: SourceRuntime;
-  network?: SourceNetwork;
   capabilities?: SourceCapabilities;
-  media?: SourceMedia;
   catalog?: Object;
   links?: Object;
   updateUrls?: string[];
 }
 
-export interface SourceSignature {
-  algorithm: string;
-  keyId: string;
-  publicKey?: string;
-  sig: string;
+export interface SourceSignature extends VerifySignature {
 }
 
-export interface SourcePackage {
-  schemaVersion: number;
+export interface SourcePackage extends VerifiablePackage {
   manifest: SourceManifest;
-  code: string;
-  updateUrls: string[];
   signature?: SourceSignature;
 }
 
