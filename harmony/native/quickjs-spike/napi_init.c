@@ -59,14 +59,12 @@ static void init_bridge(void) {
 
 static void pending_set_result(int id, const char *result) {
   if (id < 0 || id >= MAX_PENDING) {
-    free((void *)result);
     return;
   }
   pthread_mutex_lock(&g_bridge.mutex);
   Pending *item = &g_bridge.items[id];
   if (!item->used || item->cancelled) {
     pthread_mutex_unlock(&g_bridge.mutex);
-    free((void *)result);
     return;
   }
   free(item->result);
@@ -340,11 +338,9 @@ static void ExecuteEval(napi_env env, void *data) {
   JSValue global = JS_GetGlobalObject(ctx);
   JSValue call = JS_NewCFunction(ctx, js_host_call, "__hostCall", 2);
   JS_SetPropertyStr(ctx, global, "__hostCall", call);
-  JS_FreeValue(ctx, call);
 
   JSValue context = parse_context_or_empty(ctx, work->contextJson);
   JS_SetPropertyStr(ctx, global, "__hostContext", context);
-  JS_FreeValue(ctx, context);
   JS_FreeValue(ctx, global);
 
   size_t length = strlen(work->script);
