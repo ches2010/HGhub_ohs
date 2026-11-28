@@ -204,7 +204,7 @@ export class SourceManager {
 
   async exportShareCode(id: string): Promise<string> {
     const pkg = this.readPackage(id);
-    return encodeShareCode(JSON.stringify(pkg));
+    return encodeShareCode(JSON.stringify(pkg), this.context.cacheDir);
   }
 
   activate(id: string): SourceState {
@@ -411,7 +411,7 @@ export class SourceManager {
     const pkg = JSON.parse(packageText) as SourcePackage;
     this.validatePackage(pkg);
     const signature = verifyPackage(pkg);
-    const shareJson = await decodeShareCode(shareText.trim());
+    const shareJson = await decodeShareCode(shareText.trim(), this.context.cacheDir);
     const shared = JSON.parse(shareJson) as SourcePackage;
     const shareOk = canonicalPayload(pkg) === canonicalPayload(shared);
     let tamperRejected = false;
