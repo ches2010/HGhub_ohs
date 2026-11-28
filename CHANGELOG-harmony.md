@@ -24,7 +24,8 @@
   （导入 + 激活离线示例源，对应上游「试用离线示例源」）。
 - 保持既有能力不变：二次确认移除、回滚、allowUntrusted 开关、
   分享码导出、深链导入结果回显（`hg:sources-changed`）。
-- 提交 `f44503b`；构建 run 47。
+- 修复「粘贴」：ArkWeb 对 `navigator.clipboard.readText` 有隐私限制导致读取失败，新增原生桥 `pasteFromClipboard`（`pasteboard.getSystemPasteboard().getDataSync()`），鸿蒙宿主的 `pasteText()` 优先走原生；`versionCode` 2002026。
+- 提交 `f44503b`、`53369bf`；构建 run 47 / 48。
 
 ---
 
