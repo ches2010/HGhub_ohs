@@ -118,6 +118,7 @@ export default function SourceManagerSettings() {
 
   const doPaste = (): void => {
     if (busy.length > 0) return;
+    toast(tr("请点击屏幕右上角出现的系统「粘贴」按钮完成授权"), "info");
     setBusy("paste");
     void pasteText()
       .then((text) => {

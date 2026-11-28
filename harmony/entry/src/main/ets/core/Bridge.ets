@@ -52,6 +52,13 @@ export function setSharedBridge(bridge: Bridge): void {
  */
 let pendingDeepLink: string | null = null;
 
+/** P7 r4：前端请求安全粘贴时，由页面层注册「显示 PasteButton」回调 */
+let pasteRequester: (() => void) | null = null;
+
+export function setPasteRequester(callback: () => void): void {
+  pasteRequester = callback;
+}
+
 export function setPendingDeepLink(uri: string): void {
   pendingDeepLink = uri;
   hilog.info(0x0000, TAG, 'pending deep link set (len=%{public}d)', uri.length);
@@ -71,6 +78,7 @@ export class Bridge {
   private base: string = DEFAULT_BASE;
   /** 前端是否注册了返回监听（App.tsx 的 app/back-button） */
   private backEnabled: boolean = false;
+  private pendingPasteReqId: string | null = null;
   /** 页面是否已加载完成，未完成时不要吞返回键 */
   private pageReady: boolean = false;
   private playbackLog: PlaybackLog;
@@ -295,16 +303,27 @@ export class Bridge {
    * 这里把 err.code / err.message 原样带回前端，由前端区分
    * 「真空 / 需授权 / 不支持」，给出可操作提示，不再一律说成空。
    */
-  pasteFromClipboard(reqId: string): void {
-    try {
-      const data: pasteboard.PasteData = pasteboard.getSystemPasteboard().getDataSync();
-      const text = data.getPrimaryText();
-      this.reply(reqId, true, JSON.stringify(typeof text === 'string' ? text : ''));
-    } catch (err) {
-      const e = err as BusinessError;
-      const code = typeof e.code === 'number' ? e.code : -1;
-      const message = typeof e.message === 'string' && e.message.length > 0 ? e.message : '读取剪贴板失败';
-      this.reply(reqId, false, `code=${code} msg=${message}`);
+  /** P7 r4：请求用户点原生 PasteButton 安全控件授权，再回传剪贴板文本 */
+  requestPaste(reqId: string): void {
+    this.pendingPasteReqId = reqId;
+    if (pasteRequester !== null) {
+      pasteRequester();
+    } else {
+      this.reply(reqId, false, '安全粘贴控件不可用');
+    }
+  }
+
+  /** 由 Index.ets 的 PasteButton onClick 回调调用，把授权结果回传前端 */
+  deliverPaste(text: string, error: string): void {
+    const reqId = this.pendingPasteReqId;
+    if (reqId === null) {
+      return;
+    }
+    this.pendingPasteReqId = null;
+    if (error.length > 0) {
+      this.reply(reqId, false, error);
+    } else {
+      this.reply(reqId, true, JSON.stringify(text));
     }
   }
 

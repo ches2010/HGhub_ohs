@@ -1,10 +1,12 @@
 import { common } from '@kit.AbilityKit';
+import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
 import { webview } from '@kit.ArkWeb';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { util } from '@kit.ArkTS';
 import { LocalServer } from '../core/LocalServer';
 import { Bridge, setSharedBridge } from '../core/Bridge';
 import { httpRequest } from '../core/Http';
+import { setPasteRequester } from '../core/Bridge';
 
 const TAG: string = 'HGhubX';
 const PORT: number = 17860;
@@ -26,6 +28,7 @@ struct Index {
   @State bundleMissing: boolean = false;
   @State bootError: string = '';
   @State lastLoadError: string = '';
+  @State pasteButtonVisible: boolean = false;
   @State pageLoaded: boolean = false;
   @State diagOpen: boolean = false;
   @State pingResult: string = '';
@@ -44,6 +47,7 @@ struct Index {
     bridge.attach(this.controller);
     this.bridge = bridge;
     setSharedBridge(bridge);
+    setPasteRequester(() => { this.pasteButtonVisible = true; });
 
     const server = new LocalServer(context.resourceManager, PORT, () => {
       const b = this.bridge;
@@ -217,7 +221,7 @@ struct Index {
             ['http', 'setBase', 'openUrl', 'setOrientation', 'log', 'clearCache', 'setBackEnabled', 'background', 'netInfo',
             'playbackLogStatus', 'playbackLogSet', 'playbackLogAppend', 'playbackLogRead',
             'sourceState', 'sourceImportDemo', 'sourceTest', 'sourceActivate', 'sourceRollback', 'sourceRemove',
-            'sourceImport', 'sourceExportShareCode', 'sourceSetAllowUntrusted', 'sourceCheckUpdate', 'sourceSetAuthToken', 'sourceTakeDeepLink', 'pasteFromClipboard']
+            'sourceImport', 'sourceExportShareCode', 'sourceSetAllowUntrusted', 'sourceCheckUpdate', 'sourceSetAuthToken', 'sourceTakeDeepLink', 'requestPaste']
           );
           // 服务可能已经起来了：attach 之后补一次加载
           if (this.targetUrl.length > 0 && !this.pageLoaded) {
@@ -290,6 +294,34 @@ struct Index {
             }
           }
         })
+
+      // P7 r4：安全粘贴控件。前端点「粘贴」→ 显示它 → 用户点一下获临时授权 →
+      // 原生读剪贴板文本并回传 Web，无需 READ_PASTEBOARD 受限权限。
+      if (this.pasteButtonVisible) {
+        Row() {
+          PasteButton()
+            .onClick((event: ClickEvent, result: PasteButtonOnClickResult, error?: BusinessError<void>) => {
+              this.pasteButtonVisible = false;
+              const bridge = this.bridge;
+              if (bridge === null) {
+                return;
+              }
+              if (result !== PasteButtonOnClickResult.SUCCESS) {
+                bridge.deliverPaste('', `授权失败[${error?.code}]: ${error?.message ?? ''}`);
+                return;
+              }
+              try {
+                const data = pasteboard.getSystemPasteboard().getDataSync();
+                const text = data.getPrimaryText();
+                bridge.deliverPaste(typeof text === 'string' ? text : '', '');
+              } catch (err) {
+                bridge.deliverPaste('', err instanceof Error ? err.message : String(err));
+              }
+            })
+        }
+        .position({ x: '75%', y: 24 })
+        .zIndex(100)
+      }
 
       if (FORCE_DIAGNOSTICS || this.diagOpen || this.bundleMissing || this.bootError.length > 0) {
         this.diagnosePanel()

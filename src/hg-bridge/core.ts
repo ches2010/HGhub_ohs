@@ -2002,11 +2002,12 @@ async function runPendingDeepLink(): Promise<void> {
 setTimeout(() => { void runPendingDeepLink(); }, 2000);
 
 /**
- * P7 r2：读系统剪贴板。ArkWeb 里 navigator.clipboard.readText 被隐私限制，
- * 鸿蒙宿主下一律走原生 pasteboard（粘贴按钮用）。
+ * P7 r4：读系统剪贴板。ArkWeb 里 navigator.clipboard.readText 被隐私限制，
+ * 原生读取也需 PasteButton 临时授权 —— 这里请求原生显示安全粘贴控件，
+ * 用户点它授权后，文本由 Bridge.deliverPaste 回传。
  */
 export async function readSystemClipboard(): Promise<string> {
-  return (await nativeInvoke("pasteFromClipboard")) as string;
+  return (await nativeInvoke("requestPaste")) as string;
 }
 
 /** 启动时把当前线路同步给 ArkTS 侧（媒体代理要用它做 Referer） */
