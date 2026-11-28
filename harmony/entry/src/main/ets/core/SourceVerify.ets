@@ -162,6 +162,19 @@ export function canonicalPayload(pkg: VerifiablePackage): string {
   ].join('\n');
 }
 
+/**
+ * P4 试点信任根：keyId → base64url(原始 32 字节 Ed25519 公钥)。
+ * 私钥只保存在维护者本地签名机，仓库与源包内只出现公钥；
+ * 命中信任根且验签通过的包标记为 trusted，允许在关闭
+ * allowUntrusted 时导入。正式版应改为可滚动配置的信任库。
+ */
+function pilotTrustedPublicKey(keyId: string): string {
+  if (keyId === 'p4-pilot-1') {
+    return 'Ut3Ob2gewMEUqNtO7kisR2LWbcS-Wp65gicdtldixh4';
+  }
+  return '';
+}
+
 function unsignedInfo(keyId: string): SourceSignatureInfo {
   const info: SourceSignatureInfo = { status: 'unsigned', keyId: keyId, fingerprint: '' };
   return info;
@@ -196,8 +209,9 @@ export function verifyPackage(pkg: VerifiablePackage): SourceSignatureInfo {
   if (!ok) {
     throw new Error('视频源签名验证失败：内容可能已被篡改');
   }
+  const trustedKey = pilotTrustedPublicKey(signature.keyId.trim());
   const info: SourceSignatureInfo = {
-    status: 'self_signed',
+    status: trustedKey.length > 0 && trustedKey === publicText ? 'trusted' : 'self_signed',
     keyId: signature.keyId.trim(),
     fingerprint: keyFingerprint(rawPublic)
   };
