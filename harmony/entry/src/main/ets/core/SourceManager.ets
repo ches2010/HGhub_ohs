@@ -80,6 +80,7 @@ export interface SourceSignature extends VerifySignature {
 }
 
 export interface SourcePackage extends VerifiablePackage {
+  schemaVersion: number;
   manifest: SourceManifest;
   signature?: SourceSignature;
 }
