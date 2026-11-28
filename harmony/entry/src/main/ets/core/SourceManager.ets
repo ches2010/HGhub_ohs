@@ -366,8 +366,14 @@ export class SourceManager {
       if (map[key] === undefined) {
         return;
       }
-      delete map[key];
-      this.writeStorageMap(sourceId, map);
+      const next: Record<string, string> = {};
+      const keys = Object.keys(map);
+      for (const item of keys) {
+        if (item !== key) {
+          next[item] = map[item];
+        }
+      }
+      this.writeStorageMap(sourceId, next);
       return;
     }
     if (byteLength(value) > MAX_STORAGE_VALUE_BYTES) {

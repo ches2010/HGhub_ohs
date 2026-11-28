@@ -139,6 +139,14 @@ function decodeFlexibleBase64(text: string): Uint8Array {
   return decodeStandardBase64(trimmed);
 }
 
+function base64Pair(bytes: Uint8Array): Record<string, Object> {
+  const standard = encodeStandardBase64(bytes);
+  const out: Record<string, Object> = {};
+  out['b64'] = standard;
+  out['b64url'] = standardToUrlNoPad(standard);
+  return out;
+}
+
 function sha256Bytes(data: Uint8Array): Uint8Array {
   const md = cryptoFramework.createMd('SHA256');
   md.updateSync({ data: data });
@@ -234,21 +242,25 @@ export class SourceCrypto {
     const op = readString(request, 'op');
     if (op === 'sha256Hex') {
       const digest = sha256Bytes(toBytes(readString(request, 'text')));
-      return { hex: toHex(digest) };
+      const out: Record<string, Object> = {};
+      out['hex'] = toHex(digest);
+      return out;
     }
     if (op === 'randomBytes') {
       const len = clampNumber(readNumber(request, 'len'), 1, MAX_RANDOM_BYTES, 16);
       const random = cryptoFramework.createRandom().generateRandomSync(len);
       const bytes = random.data;
-      return { b64: encodeStandardBase64(bytes), b64url: standardToUrlNoPad(encodeStandardBase64(bytes)) };
+      return base64Pair(bytes);
     }
     if (op === 'base64Encode') {
       const bytes = toBytes(readString(request, 'text'));
-      return { b64: encodeStandardBase64(bytes), b64url: standardToUrlNoPad(encodeStandardBase64(bytes)) };
+      return base64Pair(bytes);
     }
     if (op === 'base64Decode') {
       const bytes = decodeFlexibleBase64(readString(request, 'b64'));
-      return { text: fromBytes(bytes) };
+      const out: Record<string, Object> = {};
+      out['text'] = fromBytes(bytes);
+      return out;
     }
     if (op === 'ecdhP256Create') {
       const generator = cryptoFramework.createAsyKeyGenerator('ECC256');
@@ -256,11 +268,11 @@ export class SourceCrypto {
       const rawPublic = rawPublicKeyFromEncoded(keyPair.pubKey.getEncoded().data);
       const handle = vault.create(keyPair);
       const publicStandard = encodeStandardBase64(rawPublic);
-      return {
-        handle: handle,
-        publicKeyB64Url: standardToUrlNoPad(publicStandard),
-        publicKeyB64: publicStandard
-      };
+      const out: Record<string, Object> = {};
+      out['handle'] = handle;
+      out['publicKeyB64Url'] = standardToUrlNoPad(publicStandard);
+      out['publicKeyB64'] = publicStandard;
+      return out;
     }
     if (op === 'ecdhP256Derive') {
       const handle = readNumber(request, 'handle');
@@ -280,7 +292,9 @@ export class SourceCrypto {
       for (const key of keys) {
         out.push(encodeStandardBase64(key));
       }
-      return { keysB64: out };
+      const result: Record<string, Object> = {};
+      result['keysB64'] = out;
+      return result;
     }
     if (op === 'aes256GcmEncrypt') {
       return this.aesGcm(request, true);
@@ -292,7 +306,10 @@ export class SourceCrypto {
       const key = decodeStandardBase64(readString(request, 'keyB64'));
       const data = request['dataB64'] !== undefined ? decodeStandardBase64(readString(request, 'dataB64')) : toBytes(readString(request, 'dataUtf8'));
       const tag = hmacSha256Bytes(key, data);
-      return { b64: encodeStandardBase64(tag), hex: toHex(tag) };
+      const out: Record<string, Object> = {};
+      out['b64'] = encodeStandardBase64(tag);
+      out['hex'] = toHex(tag);
+      return out;
     }
     throw new Error('不支持的 crypto 操作：' + op);
   }
@@ -321,7 +338,10 @@ export class SourceCrypto {
       }
       const ciphertext = concatBytes(body.data, tag.data);
       const standard = encodeStandardBase64(ciphertext);
-      return { ciphertextB64: standard, ciphertextB64Url: standardToUrlNoPad(standard) };
+      const out: Record<string, Object> = {};
+      out['ciphertextB64'] = standard;
+      out['ciphertextB64Url'] = standardToUrlNoPad(standard);
+      return out;
     }
     const cipherText = request['ciphertextB64Url'] !== undefined ? decodeFlexibleBase64(readString(request, 'ciphertextB64Url')) : decodeStandardBase64(readString(request, 'ciphertextB64'));
     if (cipherText.length < GCM_TAG_BYTES) {
@@ -336,7 +356,10 @@ export class SourceCrypto {
     const bodyOut = decoder.updateSync({ data: body });
     const finalOut = decoder.doFinalSync(null);
     const plain = finalOut === null ? bodyOut.data : concatBytes(bodyOut.data, finalOut.data);
-    return { plaintextB64: encodeStandardBase64(plain), plaintextUtf8: fromBytes(plain) };
+    const out: Record<string, Object> = {};
+    out['plaintextB64'] = encodeStandardBase64(plain);
+    out['plaintextUtf8'] = fromBytes(plain);
+    return out;
   }
 
   private gcmParams(nonce: Uint8Array, aad: Uint8Array, authTag: Uint8Array): cryptoFramework.GcmParamsSpec {

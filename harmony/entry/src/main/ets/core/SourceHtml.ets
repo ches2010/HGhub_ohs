@@ -69,6 +69,27 @@ class SelectorSequence {
   compound: SelectorCompound = new SelectorCompound();
 }
 
+interface OpenTagResult {
+  node: HtmlNode;
+  next: number;
+  selfClosing: boolean;
+}
+
+interface AttributeResult {
+  attr: SourceHtmlAttr;
+  next: number;
+}
+
+interface ScanResult {
+  text: string;
+  next: number;
+}
+
+interface AttrConditionResult {
+  condition: SelectorCondition;
+  next: number;
+}
+
 function byteLength(text: string): number {
   const encoded = new util.TextEncoder().encodeInto(text);
   return encoded.byteLength;
@@ -421,7 +442,7 @@ export class SourceHtml {
     }
   }
 
-  private readOpenTag(input: string, lt: number): { node: HtmlNode; next: number; selfClosing: boolean } | null {
+  private readOpenTag(input: string, lt: number): OpenTagResult | null {
     let i = lt + 1;
     while (i < input.length && isSpaceChar(input.charAt(i))) {
       i++;
@@ -470,7 +491,7 @@ export class SourceHtml {
     return { node: node, next: i, selfClosing: selfClosing };
   }
 
-  private readAttribute(input: string, start: number): { attr: SourceHtmlAttr; next: number } | null {
+  private readAttribute(input: string, start: number): AttributeResult | null {
     let i = start;
     while (i < input.length && isSpaceChar(input.charAt(i))) {
       i++;
@@ -521,7 +542,8 @@ export class SourceHtml {
       }
       i = j;
     }
-    return { attr: { name: name, value: value }, next: i };
+    const parsed: SourceHtmlAttr = { name: name, value: value };
+    return { attr: parsed, next: i };
   }
 
   private findTagEnd(input: string, lt: number): number {
@@ -638,7 +660,7 @@ export class SourceHtml {
     return sequences;
   }
 
-  private readSelectorCompound(part: string, start: number): { text: string; next: number } {
+  private readSelectorCompound(part: string, start: number): ScanResult {
     let depth = 0;
     let quote = '';
     let i = start;
@@ -728,7 +750,7 @@ export class SourceHtml {
     return compound;
   }
 
-  private readIdent(text: string, start: number): { text: string; next: number } {
+  private readIdent(text: string, start: number): ScanResult {
     let i = start;
     while (i < text.length) {
       const ch = text.charAt(i);
@@ -740,7 +762,7 @@ export class SourceHtml {
     return { text: text.substring(start, i), next: i };
   }
 
-  private readAttrCondition(text: string, start: number): { condition: SelectorCondition; next: number } | null {
+  private readAttrCondition(text: string, start: number): AttrConditionResult | null {
     let i = start + 1;
     let quote = '';
     let depth = 1;

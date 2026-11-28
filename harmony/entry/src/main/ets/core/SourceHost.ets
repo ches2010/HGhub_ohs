@@ -155,9 +155,10 @@ export class SourceHostSession {
       if (sourceId !== this.context.sourceId) {
         throw new Error('host sourceId mismatch');
       }
-      const request = payload['request'] !== undefined && payload['request'] !== null
-        ? payload['request'] as Record<string, Object>
-        : {};
+      let request: Record<string, Object> = {};
+      if (payload['request'] !== undefined && payload['request'] !== null) {
+        request = payload['request'] as Record<string, Object>;
+      }
       let result: Object;
       if (op === 'fetch') {
         result = await this.fetch(request);
@@ -170,13 +171,17 @@ export class SourceHostSession {
       } else if (op === 'storageGet') {
         const key = readString(request, 'key');
         const value = this.storage.storageGet(this.context.sourceId, key);
-        result = { value: value === null ? null : value };
+        const storageResult: Record<string, Object> = {};
+        storageResult['value'] = value === null ? null : value;
+        result = storageResult;
       } else if (op === 'storageSet') {
         const key = readString(request, 'key');
         const value = readString(request, 'value');
         const clear = readBoolean(request, 'clear');
         this.storage.storageSet(this.context.sourceId, key, clear ? null : value);
-        result = { ok: true };
+        const okResult: Record<string, Object> = {};
+        okResult['ok'] = true;
+        result = okResult;
       } else {
         throw new Error('不支持的 host 操作：' + op);
       }
