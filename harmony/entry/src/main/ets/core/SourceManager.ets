@@ -547,7 +547,7 @@ export class SourceManager {
   private async decodePackageInput(raw: string): Promise<SourcePackage> {
     const trimmed = raw.trim();
     if (trimmed.startsWith('hghubx-src://')) {
-      const json = await decodeShareCode(trimmed);
+      const json = await decodeShareCode(trimmed, this.context.cacheDir);
       return JSON.parse(json) as SourcePackage;
     }
     if (trimmed.startsWith('{')) {
