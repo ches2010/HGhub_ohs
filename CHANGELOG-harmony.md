@@ -25,7 +25,8 @@
 - 保持既有能力不变：二次确认移除、回滚、allowUntrusted 开关、
   分享码导出、深链导入结果回显（`hg:sources-changed`）。
 - 修复「粘贴」：ArkWeb 对 `navigator.clipboard.readText` 有隐私限制导致读取失败，新增原生桥 `pasteFromClipboard`（`pasteboard.getSystemPasteboard().getDataSync()`），鸿蒙宿主的 `pasteText()` 优先走原生；`versionCode` 2002026。
-- 提交 `f44503b`、`53369bf`；构建 run 47 / 48。
+- 修复 r3/r4：`getDataSync()` 在未授权时**静默返回空**（`READ_PASTEBOARD` 是 system_basic 受限权限，三方无法申请），改为原生 **PasteButton 安全控件**：点 Web「粘贴」→ 右上角出现系统 PasteButton → 用户点它授权 → 原生 `getDataSync()` 读到文本并回传 Web；无需任何权限声明。
+- 提交 `f44503b`、`53369bf`、`7deb8775`；构建 run 47/48/49/50（49 为错误码探针）。
 
 ---
 
