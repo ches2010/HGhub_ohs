@@ -171,8 +171,8 @@ export class SourceHostSession {
       } else if (op === 'storageGet') {
         const key = readString(request, 'key');
         const value = this.storage.storageGet(this.context.sourceId, key);
-        const storageResult: Record<string, Object> = {};
-        storageResult['value'] = value === null ? null : value;
+        const storageResult: Record<string, Object | null> = {};
+        storageResult['value'] = value;
         result = storageResult;
       } else if (op === 'storageSet') {
         const key = readString(request, 'key');
