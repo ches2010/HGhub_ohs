@@ -1943,6 +1943,8 @@ export async function invoke<T = Json>(cmd: string, args: Record<string, Json> =
       return (await nativeInvoke("sourceCheckUpdate", String(a.id ?? ""))) as T;
     case "source_take_deep_link":
       return (await nativeInvoke("sourceTakeDeepLink")) as T;
+    case "source_import_demo":
+      return (await nativeInvoke("sourceImportDemo")) as T;
 
     default:
       return notPorted(cmd);
