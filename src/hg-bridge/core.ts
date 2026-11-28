@@ -315,6 +315,7 @@ function setBase(url: string): string {
   } catch {
     /* 启动早期桥可能还没注入，忽略即可 */
   }
+  syncSourceAuthToken();
   return url;
 }
 
@@ -871,11 +872,26 @@ function setSession(token: string | null, user: Json): void {
   if (token === null) {
     localStorage.removeItem(LS_TOKEN);
     localStorage.removeItem(LS_USER);
-    return;
+  } else {
+    localStorage.setItem(LS_TOKEN, token);
+    if (user === null || user === undefined) localStorage.removeItem(LS_USER);
+    else localStorage.setItem(LS_USER, JSON.stringify(user));
   }
-  localStorage.setItem(LS_TOKEN, token);
-  if (user === null || user === undefined) localStorage.removeItem(LS_USER);
-  else localStorage.setItem(LS_USER, JSON.stringify(user));
+  syncSourceAuthToken();
+}
+
+/**
+ * 把当前会话 token 推给原生（host.auth 用），登录 / 退出 / 切线路时都会走到。
+ * 自定义线路（用户手输域名，不可信）推空串——对齐 RFC 0001
+ * 「未登录或不可信线路时为 null」。token 不落日志。
+ */
+function syncSourceAuthToken(): void {
+  try {
+    const token = lineStateStore.isCustom() ? "" : (getToken() ?? "");
+    native().sourceSetAuthToken(token);
+  } catch {
+    /* 桥未注入或非鸿蒙宿主时忽略 */
+  }
 }
 
 /* ── 工具 ────────────────────────────────────────────── */
@@ -1794,6 +1810,7 @@ export async function invoke<T = Json>(cmd: string, args: Record<string, Json> =
       lineGeneration += 1;
       lineStateStore.setCustom(url);
       native().setBase(url);
+      syncSourceAuthToken();
       return { base: url, custom: true } as T;
     }
     case "line_reset": {
@@ -1945,6 +1962,7 @@ export function syncBaseToNative(): void {
   } catch {
     /* 页面首次加载时桥可能还没注入，忽略 */
   }
+  syncSourceAuthToken();
 }
 
 /* ── 线路模块的传输依赖 ───────────────────────────────── */

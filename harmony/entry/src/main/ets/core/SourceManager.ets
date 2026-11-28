@@ -8,6 +8,7 @@ import quickjsSpike from 'libquickjs_spike.so';
 import { SourceHostContext, SourceHostInfo, SourceHostSession, hostPrelude, isPublicHttpsUrl } from './SourceHost';
 import { canonicalPayload, SourceSignatureInfo, verifyPackage, VerifiablePackage, VerifyImageDecrypt, VerifyManifest, VerifyMedia, VerifyNetwork, VerifyRuntime, VerifySignature } from './SourceVerify';
 import { decodeShareCode, encodeShareCode } from './SourceShare';
+import { loadSourceAuthToken } from './SourceAuth';
 
 const TAG: string = 'HGhubX';
 const SOURCE_ROOT = 'sources';
@@ -364,7 +365,7 @@ export class SourceManager {
       }
     };
     const context: SourceHostContext = { sourceId: DEMO_ID, info: info, allowedOrigins: [] };
-    const session = new SourceHostSession(context, this);
+    const session = new SourceHostSession(context, this, (): string => loadSourceAuthToken(this.context.filesDir));
     const script = [
       hostPrelude(),
       'var out = {',
@@ -375,6 +376,7 @@ export class SourceManager {
       '  base64Text: host.crypto.base64Decode(host.crypto.base64Encode("hghubx").b64),',
       '  hmac: host.crypto.hmacSha256({ keyB64: host.crypto.randomBytes(16).b64, dataUtf8: "p3a" }).hex,',
       '  htmlItems: host.htmlQuery("<ul><li class=\\"a\\">A</li><li class=\\"b\\">B</li></ul>", "li.a").length,',
+      '  authHasToken: (function () { try { var t = host.auth.token; return typeof t === \"string\" && t.length > 0; } catch (e) { return false; } })(),',
       '  insecureBlocked: false,',
       '  privateBlocked: false,',
       '  originBlocked: false',
@@ -660,7 +662,7 @@ export class SourceManager {
 
   private runPackageScript(pkg: SourcePackage, script: string): Promise<string> {
     const context = this.hostContext(pkg.manifest);
-    const session = new SourceHostSession(context, this);
+    const session = new SourceHostSession(context, this, (): string => loadSourceAuthToken(this.context.filesDir));
     return quickjsSpike
       .evaluateAsync(script, (requestId: number, request: string): void => {
         this.dispatchHost(session, requestId, request);

@@ -19,6 +19,7 @@ import { connection } from '@kit.NetworkKit';
 import { httpRequest } from './Http';
 import { PlaybackLog } from './PlaybackLog';
 import { SourceManager } from './SourceManager';
+import { saveSourceAuthToken } from './SourceAuth';
 
 const TAG: string = 'HGhubX';
 
@@ -263,6 +264,19 @@ export class Bridge {
       .catch((err: Error) => {
         this.reply(reqId, false, err.message);
       });
+  }
+
+  /**
+   * 前端在登录 / 退出 / 切线路时推送当前会话 token（host.auth 用）。
+   * 自定义线路由前端推空串；这里只落盘，不打印 token 本身。
+   */
+  sourceSetAuthToken(token: string): void {
+    try {
+      saveSourceAuthToken(this.context.filesDir, token);
+      hilog.info(0x0000, TAG, 'source auth token updated (%{public}s)', token.length > 0 ? 'present' : 'cleared');
+    } catch (err) {
+      hilog.warn(0x0000, TAG, 'source auth token save failed: %{public}s', (err as Error).message);
+    }
   }
 
   sourceSetAllowUntrusted(reqId: string, allow: boolean): void {

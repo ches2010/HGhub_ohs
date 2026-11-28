@@ -9,8 +9,12 @@
  * - crypto：私钥 / 共享秘密留在 ArkTS vault，不进源 JS；
  * - storage：按 sourceId 隔离，最多 64 键、单值 32 KB。
  *
- * Pilot 阶段明确不做：逐跳重定向白名单校验、DNS 固定、host.auth 真实账号绑定、
- * 二进制响应。这些是 P3b / 正式移植的安全缺口，不能默认放行。
+ * Pilot 阶段明确不做：逐跳重定向白名单校验、DNS 固定、二进制响应。
+ * 这些是正式移植的安全缺口，不能默认放行。
+ *
+ * P5：host.auth 按 RFC 0001 实现真实语义——token 由前端在登录 / 退出 /
+ * 切线路时经 Bridge.sourceSetAuthToken 推送并落盘；未登录或自定义线路
+ * （不可信）时由前端推空串。这里只读当前槽值，绝不输出 token 本身。
  */
 import { util } from '@kit.ArkTS';
 import { httpRequest } from './Http';
@@ -94,7 +98,7 @@ export function hostPrelude(): string {
     '  const info = Object.freeze(context.info || {});',
     '  globalThis.host = Object.freeze({',
     '    info: info,',
-    '    auth: Object.freeze({ token: null }),',
+    '    auth: Object.freeze({ get token() { return request("auth", {}).token; } }),',
     '    fetch: function(req) { return request("fetch", { request: req || {} }); },',
     '    htmlQuery: function(html, selector) {',
     '      return request("htmlQuery", { request: { html: String(html == null ? "" : html), selector: String(selector == null ? "" : selector) } });',
@@ -126,16 +130,21 @@ export function hostPrelude(): string {
   ].join('\n');
 }
 
+/** 读取当前登录凭据槽；空串表示未登录 / 不可信线路（host.auth 返回 null）。 */
+export type SourceAuthTokenProvider = () => string;
+
 export class SourceHostSession {
   private context: SourceHostContext;
   private storage: SourceHostStorage;
+  private authTokenProvider: SourceAuthTokenProvider;
   private html: SourceHtml;
   private crypto: SourceCrypto;
   private vault: SourceCryptoVault;
 
-  constructor(context: SourceHostContext, storage: SourceHostStorage) {
+  constructor(context: SourceHostContext, storage: SourceHostStorage, authTokenProvider: SourceAuthTokenProvider) {
     this.context = context;
     this.storage = storage;
+    this.authTokenProvider = authTokenProvider;
     this.html = new SourceHtml();
     this.crypto = new SourceCrypto();
     this.vault = new SourceCryptoVault();
@@ -162,6 +171,11 @@ export class SourceHostSession {
       let result: Object;
       if (op === 'fetch') {
         result = await this.fetch(request);
+      } else if (op === 'auth') {
+        const token: string = this.authTokenProvider();
+        const authResult: Record<string, Object | null> = {};
+        authResult['token'] = token.length > 0 ? token : null;
+        result = authResult;
       } else if (op === 'htmlQuery') {
         const html = readString(request, 'html');
         const selector = readString(request, 'selector');
