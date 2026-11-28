@@ -133,6 +133,9 @@ function urlToStandard(text: string): string {
 
 function decodeFlexibleBase64(text: string): Uint8Array {
   const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return new Uint8Array(0);
+  }
   if (trimmed.indexOf('-') >= 0 || trimmed.indexOf('_') >= 0) {
     return decodeStandardBase64(urlToStandard(trimmed));
   }
