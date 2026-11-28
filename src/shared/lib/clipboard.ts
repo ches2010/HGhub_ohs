@@ -1,5 +1,6 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { hasHarmonyBridge, readSystemClipboard } from "../../hg-bridge/core";
 import { tr } from "../i18n";
 
 export async function copyText(text: string): Promise<void> {
@@ -15,6 +16,9 @@ export async function copyText(text: string): Promise<void> {
 
 /** P7：对齐上游 SourceOnboarding 的「粘贴」入口；读取失败由调用方提示手动粘贴。 */
 export async function pasteText(): Promise<string> {
+  if (hasHarmonyBridge()) {
+    return await readSystemClipboard();
+  }
   if (isTauri()) {
     return await readText();
   }

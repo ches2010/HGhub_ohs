@@ -2001,6 +2001,14 @@ async function runPendingDeepLink(): Promise<void> {
 // 启动兜底：冷启动时 pending 在页面加载前就位，onPageEnd 会通知；这里再兜一次
 setTimeout(() => { void runPendingDeepLink(); }, 2000);
 
+/**
+ * P7 r2：读系统剪贴板。ArkWeb 里 navigator.clipboard.readText 被隐私限制，
+ * 鸿蒙宿主下一律走原生 pasteboard（粘贴按钮用）。
+ */
+export async function readSystemClipboard(): Promise<string> {
+  return (await nativeInvoke("pasteFromClipboard")) as string;
+}
+
 /** 启动时把当前线路同步给 ArkTS 侧（媒体代理要用它做 Referer） */
 export function syncBaseToNative(): void {
   try {

@@ -125,7 +125,7 @@ export default function SourceManagerSettings() {
         if (t.length > 0) setInput(t);
         else toast(tr("剪贴板为空"), "info");
       })
-      .catch(() => toast(tr("读取剪贴板失败，请手动粘贴"), "info"))
+      .catch((e) => toast(errText(e) || tr("读取剪贴板失败，请手动粘贴"), "info"))
       .finally(() => setBusy(""));
   };
 

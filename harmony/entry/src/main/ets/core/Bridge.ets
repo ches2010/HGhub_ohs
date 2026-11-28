@@ -12,7 +12,7 @@
 import { webview } from '@kit.ArkWeb';
 import { common, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { BusinessError, pasteboard } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { util } from '@kit.ArkTS';
 import { connection } from '@kit.NetworkKit';
@@ -287,6 +287,21 @@ export class Bridge {
    * 前端在登录 / 退出 / 切线路时推送当前会话 token（host.auth 用）。
    * 自定义线路由前端推空串；这里只落盘，不打印 token 本身。
    */
+  /**
+   * P7 r2：读取系统剪贴板（ArkWeb 对 navigator.clipboard.readText 有隐私限制，
+   * 前端「粘贴」走原生 pasteboard）。只回传文本，不落日志。
+   */
+  pasteFromClipboard(reqId: string): void {
+    try {
+      const data: pasteboard.PasteData = pasteboard.getSystemPasteboard().getDataSync();
+      const text = data.getPrimaryText();
+      this.reply(reqId, true, JSON.stringify(typeof text === 'string' ? text : ''));
+    } catch (err) {
+      const message = err instanceof Error && err.message.length > 0 ? err.message : '剪贴板为空或不可读';
+      this.reply(reqId, false, message);
+    }
+  }
+
   /** 上游契约：取走并清空暂存深链（无 pending 时返回 null），前端自己走导入流水线 */
   sourceTakeDeepLink(reqId: string): void {
     const uri = pendingDeepLink;
